@@ -1523,6 +1523,13 @@ else
   if ! git show "$_parity_base:.claude/hooks/require-migration-ticket.sh" >"$_parity_baseline" 2>/dev/null; then
     record_fail "#1182 selection parity baseline can be read"
     _parity_fail=1
+  # FORK-LOCAL (rafik-wahid-cubeish/apexyard#6): an adopter fork's HEAD^ on a
+  # sync PR is its previous release, which can predate #1182 and carry neither
+  # the instrumentation anchor nor the selection-test branch. There is no
+  # parent implementation to compare against, so skip visibly. Drop this
+  # branch once upstream ships its own fix.
+  elif ! grep -qE 'if is_migration_path "\$_tgt"; then|APEXYARD_SELECTION_TEST' "$_parity_baseline"; then
+    echo "SKIP: #1182 selection parity — parent hook ($_parity_base) predates #1182; no baseline selector to compare"
   else
     # Instrument only the baseline's first-match selector. The current hook's
     # explicit selection-test branch emits the same raw spelling before gating.
