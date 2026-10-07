@@ -18,8 +18,9 @@ SRC_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 HOOK_SRC="$SRC_ROOT/.claude/hooks/block-unreviewed-merge.sh"
 LIB_PR="$SRC_ROOT/.claude/hooks/_lib-extract-pr.sh"
 LIB_MARKERS="$SRC_ROOT/.claude/hooks/_lib-review-markers.sh"
+LIB_BEHIND="$SRC_ROOT/.claude/hooks/_lib-merge-behind.sh"
 
-for f in "$HOOK_SRC" "$LIB_PR" "$LIB_MARKERS"; do
+for f in "$HOOK_SRC" "$LIB_PR" "$LIB_MARKERS" "$LIB_BEHIND"; do
   if [ ! -f "$f" ]; then
     echo "FAIL: required source missing: $f" >&2
     exit 1
@@ -54,7 +55,20 @@ make_sandbox() {
   cp "$HOOK_SRC"    "$sb/.claude/hooks/block-unreviewed-merge.sh"
   cp "$LIB_PR"      "$sb/.claude/hooks/_lib-extract-pr.sh"
   cp "$LIB_MARKERS" "$sb/.claude/hooks/_lib-review-markers.sh"
+  cp "$LIB_BEHIND"  "$sb/.claude/hooks/_lib-merge-behind.sh"
   chmod +x "$sb/.claude/hooks/block-unreviewed-merge.sh"
+  # The hook sources the shared config reader (me2resh/apexyard#957, the
+  # configurable human_approver_title key) — mirror the same sandbox setup
+  # test_warn_stale_review_markers.sh already uses: copy the reader + the
+  # shipped defaults so config lookups resolve the same way they do in a
+  # real fork. Optional: harmless no-op for every case that doesn't touch
+  # review_markers.human_approver_title (they get the default "CEO").
+  if [ -f "$SRC_ROOT/.claude/hooks/_lib-read-config.sh" ]; then
+    cp "$SRC_ROOT/.claude/hooks/_lib-read-config.sh" "$sb/.claude/hooks/_lib-read-config.sh"
+  fi
+  if [ -f "$SRC_ROOT/.claude/project-config.defaults.json" ]; then
+    cp "$SRC_ROOT/.claude/project-config.defaults.json" "$sb/.claude/project-config.defaults.json"
+  fi
 
   # Mock `gh` so resolve_pr_head returns FIXED_SHA. The hook calls
   # `gh pr view <N> --json headRefOid -q '.headRefOid'` (or a similar
@@ -64,9 +78,16 @@ make_sandbox() {
 #!/bin/bash
 # Minimal gh shim for test_block_unreviewed_merge.
 case "\$*" in
-  *"pr view"*"headRefOid"*)     echo "$FIXED_SHA" ;;
-  *"pr view"*"headRefName"*)    echo "feature/GH-99-test" ;;
-  *"pr view"*"headRepository"*) echo "me2resh/apexyard" ;;
+  *"pr view"*"headRefOid"*)        echo "$FIXED_SHA" ;;
+  *"pr view"*"headRefName"*)       echo "feature/GH-99-test" ;;
+  *"pr view"*"headRepository"*)    echo "me2resh/apexyard" ;;
+  *"pr view"*"mergeStateStatus"*)  echo "\${MOCK_MERGE_STATE:-CLEAN}" ;;
+  *"pr view"*"baseRefName"*)       echo "\${MOCK_BASE_BRANCH:-dev}" ;;
+  # #1386: is_pr_behind_base reads behind_by from the compare API, not
+  # mergeStateStatus. \$MOCK_BEHIND_BY lets a case say "the PR IS behind"
+  # independent of whatever \$MOCK_MERGE_STATE says — the exact split #1386
+  # reported (a behind PR whose mergeStateStatus reads CLEAN or BLOCKED).
+  *"api "*"compare/"*)             echo "\${MOCK_BEHIND_BY:-0}" ;;
   *) ;;
 esac
 exit 0
@@ -193,6 +214,20 @@ run_case "missing rex marker → blocks" 2 "no recorded code-reviewer" "$sb" 201
 sb=$(make_sandbox)
 write_rex_marker "$sb" 202
 run_case "missing ceo marker → blocks" 2 "no CEO approval marker" "$sb" 202
+
+# 3b. Configurable human_approver_title (me2resh/apexyard#957) — a custom
+# title configured via .claude/project-config.json flows through to the
+# BLOCKED message's prose, while the marker filename/path printed alongside
+# it is untouched (still "-ceo.approved"). This does NOT change the default
+# behaviour asserted by case 3 above — that case's sandbox has no override
+# file, so it still reads the shipped default ("CEO") and its literal
+# "no CEO approval marker" assertion is unaffected by this feature existing.
+sb=$(make_sandbox)
+write_rex_marker "$sb" 957
+cat > "$sb/.claude/project-config.json" <<'EOF'
+{"review_markers": {"human_approver_title": "Maintainer"}}
+EOF
+run_case "custom human_approver_title flows through to BLOCKED message (#957)" 2 "no Maintainer approval marker" "$sb" 957
 
 # 4. Bare-SHA legacy CEO marker → blocks "stale or unrecognised format"
 sb=$(make_sandbox)
@@ -370,9 +405,9 @@ run_case_custom_cmd "compound-old-skill-version" 2 "no CEO approval marker" "$sb
 
 # --- Sync-PR squash guard tests (apexyard#459) -------------------------
 #
-# The guard in block-unreviewed-merge.sh refuses --squash on PRs whose
-# head branch starts with `sync/main-to-dev-after-`. The guard fires on
-# both merge shapes (gh pr merge + gh api .../merge).
+# The guard in block-unreviewed-merge.sh refuses --squash/--rebase on PRs
+# whose head branch is a release-sync or /update sync branch. The guard fires
+# on both merge shapes (gh pr merge + gh api .../merge).
 #
 # The gh mock in make_sandbox already handles `gh pr view ... headRefOid`
 # calls. We extend it per-sandbox to also handle `headRefName` calls so
@@ -423,7 +458,7 @@ input=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
 got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
 got_rc=$?
 rm -rf "$sb"
-if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "cannot be squash-merged"; then
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -Eq "cannot (be squash-merged|use squash or rebase)"; then
   echo "PASS [sync PR + --squash → blocked (apexyard#459)]"; PASS=$((PASS+1))
 else
   echo "FAIL [sync PR + --squash → blocked]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
@@ -472,7 +507,7 @@ input=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
 got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
 got_rc=$?
 rm -rf "$sb"
-if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "cannot be squash-merged"; then
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -Eq "cannot (be squash-merged|use squash or rebase)"; then
   echo "PASS [sync PR + gh-api merge_method=squash → blocked (apexyard#459, #47 bypass class)]"; PASS=$((PASS+1))
 else
   echo "FAIL [sync PR + gh-api merge_method=squash → blocked]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
@@ -493,6 +528,40 @@ if [ "$got_rc" = "0" ] && [ -z "$got_stderr" ]; then
 else
   echo "FAIL [sync PR + gh-api merge_method=merge → passes]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
   FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}sync-ghapi-merge-passes "
+fi
+
+# Case S6: /update sync branch + --squash → BLOCKED (#1301)
+sb=$(make_sandbox_with_sync_branch "chore/#1301-sync-upstream-apexyard")
+write_rex_marker "$sb" 305
+write_ceo_marker_structured "$sb" 305
+cmd="gh pr merge 305 --repo me2resh/apexyard --squash --delete-branch"
+input=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "cannot use squash or rebase"; then
+  echo "PASS [/update sync PR + --squash → blocked (apexyard#1301)]"; PASS=$((PASS+1))
+else
+  echo "FAIL [/update sync PR + --squash → blocked]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}update-sync-squash-blocked "
+fi
+
+# Case S7: /update sync PR + tracker_pr_merge positional squash → BLOCKED
+# The approve-merge skill calls the tracker-agnostic wrapper with the strategy
+# as its fourth positional argument, so flag-only detection must not be enough.
+sb=$(make_sandbox_with_sync_branch "chore/#1301-sync-upstream-apexyard")
+write_rex_marker "$sb" 306
+write_ceo_marker_structured "$sb" 306
+cmd="tracker_pr_merge me2resh/apexyard 306 squash true '' ''"
+input=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "cannot use squash or rebase"; then
+  echo "PASS [/update sync PR + tracker_pr_merge positional squash → blocked (apexyard#1301)]"; PASS=$((PASS+1))
+else
+  echo "FAIL [/update sync PR + tracker_pr_merge positional squash → blocked]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}update-sync-tracker-squash-blocked "
 fi
 
 # --- Cross-repo collision regression test (#485) ----------------------
@@ -638,14 +707,15 @@ write_rex_marker "$sb" 100 "$FIXED_SHA" "org-a/project-a"
 write_ceo_marker_structured "$sb" 100 "$FIXED_SHA" "org-a/project-a"
 run_case_wrapper "wrapper: cross-repo markers do not satisfy the gate (#485 parity)" 2 "no recorded code-reviewer|no CEO approval marker" "$sb" 100 "org-b/project-b"
 
-# --- warn-review-marker-write.sh tests (#494, upgraded to BLOCKING for
-# --- rex/security/architecture in #843) --------------------------------
+# --- warn-review-marker-write.sh tests (#494; BLOCKING in #843, returned
+# --- to ADVISORY in #1026 per AgDR-0111) -------------------------------
 #
 # The hook fires when a Write or Bash command targets a *-rex.approved,
 # *-ceo.approved, *-security.approved, or *-architecture.approved file.
-# *-ceo.approved stays advisory-only (always exit 0, unchanged from #728).
-# The other three now BLOCK (exit 2) unless a matching
-# .claude/session/active-reviewer marker is present. Full case coverage
+# ALL roles are advisory: the hook warns and always exits 0 (#1026,
+# AgDR-0111). A matching .claude/session/active-reviewer marker suppresses
+# the warning for the sanctioned reviewer; it does not unblock anything,
+# because nothing is blocked. Full case coverage
 # (matching marker, kind/pr/repo mismatch, legacy bare filenames, security +
 # architecture roles) lives in the dedicated test_warn_review_marker_write.sh;
 # this file only keeps the original #494 smoke assertions in sync with the
@@ -656,15 +726,17 @@ if [ ! -f "$WARN_HOOK_SRC" ]; then
   echo "FAIL: warn-review-marker-write.sh not found at $WARN_HOOK_SRC" >&2
   FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}warn-hook-missing "
 else
-  # W1: Write to a rex.approved path, no active-reviewer marker → BLOCKED, exit 2 (#843)
+  # W1: Write to a rex.approved path, no active-reviewer marker → WARNS, exit 0.
+  # Was BLOCKED/exit 2 from #843; returned to advisory in #1026 per AgDR-0111
+  # (the marker hook is a BACKSTOP — this file's own hook is the control).
   input=$(jq -nc --arg fp ".claude/session/reviews/me2resh__apexyard__42-rex.approved" \
     '{tool_name:"Write", tool_input:{file_path:$fp, content:"abc"}}')
   got_stderr=$(echo "$input" | bash "$WARN_HOOK_SRC" 2>&1 >/dev/null)
   got_rc=$?
-  if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "BLOCKED"; then
-    echo "PASS [warn-hook: Write to rex.approved with no active-reviewer marker → BLOCKED, exit 2 (#843)]"; PASS=$((PASS+1))
+  if [ "$got_rc" = "0" ] && echo "$got_stderr" | grep -q "WARNING"; then
+    echo "PASS [warn-hook: Write to rex.approved with no active-reviewer marker → WARNS, exit 0 (#1026)]"; PASS=$((PASS+1))
   else
-    echo "FAIL [warn-hook: Write to rex.approved → BLOCKED, exit 2]: rc=$got_rc stderr=${got_stderr:0:200}" >&2
+    echo "FAIL [warn-hook: Write to rex.approved → WARNS, exit 0]: rc=$got_rc stderr=${got_stderr:0:200}" >&2
     FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}warn-hook-write-rex "
   fi
 
@@ -703,6 +775,389 @@ else
     echo "FAIL [warn-hook: non-marker Bash → must be silent]: rc=$got_rc stderr=${got_stderr:0:200}" >&2
     FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}warn-hook-nonmarker-bash "
   fi
+fi
+
+# --- Fail-closed on jq-unavailable/unparseable input (#965) ------------
+#
+# make_sandbox_broken_jq installs a `jq` stub in $sb/bin that ALWAYS fails
+# (exit 1, no stdout) — same code path as jq being entirely missing from
+# PATH, since either way `jq -r '.tool_input.command // empty'` yields
+# nothing. $sb/bin is prepended to PATH by run_case_custom_cmd, so this
+# stub shadows the real jq for the duration of the hook's invocation only.
+make_sandbox_broken_jq() {
+  local sb
+  sb=$(make_sandbox)
+  cat > "$sb/bin/jq" <<'EOF'
+#!/bin/bash
+# Simulates a broken/unavailable jq: always fails, no output. See #965.
+exit 1
+EOF
+  chmod +x "$sb/bin/jq"
+  echo "$sb"
+}
+
+# 14. jq broken + a real `gh pr merge` with NO approval markers at all →
+#     must BLOCK (exit 2). Pre-#965 this fell through the old
+#     `[ -z "$COMMAND" ] && exit 0` no-op and merged completely ungated.
+sb=$(make_sandbox_broken_jq)
+run_case_custom_cmd "#965: jq broken, gh pr merge with no markers -> BLOCKS (fail closed)" 2 \
+  "cannot evaluate this command" "$sb" \
+  "gh pr merge 300 --repo me2resh/apexyard --squash"
+
+# 15. jq broken + a CLEARLY non-merge Bash command → must stay a no-op
+#     (exit 0, no stderr). Proves the fail-closed fix does NOT block every
+#     Bash command in the session just because jq is broken — only the
+#     merge-shaped ones (the boundary the #965 fix is built around).
+sb=$(make_sandbox_broken_jq)
+cmd="npm test"
+input=$(jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "0" ] && [ -z "$got_stderr" ]; then
+  echo "PASS [#965: jq broken, clearly non-merge command -> stays a no-op]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#965: jq broken, clearly non-merge command -> stays a no-op]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}jq-broken-nonmerge-noop "
+fi
+
+# 16. jq broken + the gh-api merge shape (no `gh pr merge` substring at
+#     all) → must still BLOCK. Proves the raw-text fallback detector
+#     (is_merge_command reused against $INPUT) recognises every shape the
+#     normal parsed-command path recognises, not just the literal
+#     `gh pr merge` string.
+sb=$(make_sandbox_broken_jq)
+run_case_custom_cmd "#965: jq broken, gh-api merge shape -> BLOCKS (fail closed)" 2 \
+  "cannot evaluate this command" "$sb" \
+  "gh api repos/me2resh/apexyard/pulls/301/merge -X PUT"
+
+# --- Fail-closed on JSON-escaped separators in the raw-payload fallback
+#     (#973, Hakim's residual finding on the #965/#969 fix) ------------
+#
+# The #965 fallback (case 14 above) scans $INPUT — the RAW, still-JSON-
+# encoded payload text — directly, because jq (which would normally
+# decode it) is unavailable. That works for a normal space-separated
+# command because `gh`, `pr`, `merge` and the spaces between them survive
+# JSON string-encoding unchanged. But a command whose SEPARATORS are
+# themselves JSON-escaped (a literal tab encodes as the two-character
+# sequence `\t`) does NOT survive unchanged — those two characters are
+# not whitespace to `is_merge_command`'s `\s+` regex, so pre-#973 this
+# evaded the fallback detector entirely and the merge sailed through
+# ungated. `run_case_custom_cmd` builds the test payload with the REAL
+# system jq (`jq -nc --arg c "$cmd" ...`, called before the sandboxed
+# broken-jq stub is on PATH), so a literal tab placed in $cmd here is
+# correctly JSON-escaped to `\t` in the payload — exactly the shape the
+# broken-jq fallback then has to recognise without jq's help.
+sb=$(make_sandbox_broken_jq)
+tab_cmd=$'gh\tpr\tmerge 305 --repo me2resh/apexyard --squash'
+run_case_custom_cmd "#973: jq broken, JSON-escaped-tab merge command -> BLOCKS (fail closed)" 2 \
+  "cannot evaluate this command" "$sb" \
+  "$tab_cmd"
+
+# 18. jq broken + a clearly non-merge command whose words ALSO happen to
+#     be tab-separated (so it exercises the same JSON-escape-normalize
+#     code path) → must still stay a no-op. Proves the #973 fix doesn't
+#     turn every tab-containing payload into a false-positive block —
+#     only ones that are merge-shaped once the escapes are decoded.
+sb=$(make_sandbox_broken_jq)
+tab_nonmerge_cmd=$'echo\tnot\ta\tmerge\tcommand\tat\tall'
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$(jq -nc --arg c "$tab_nonmerge_cmd" '{tool_name:"Bash", tool_input:{command:$c}}')' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "0" ] && [ -z "$got_stderr" ]; then
+  echo "PASS [#973: jq broken, JSON-escaped-tab NON-merge command -> stays a no-op]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#973: jq broken, JSON-escaped-tab NON-merge command -> stays a no-op]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}jq-broken-tab-nonmerge-noop "
+fi
+
+# --- #1091: forge HEAD unresolvable -> the gate must FAIL CLOSED -------
+#
+# The gate's integrity property is that marker SHAs are compared against the
+# FORGE-reported PR HEAD — state an agent cannot author. Before #1091 the hook
+# fell back to `git rev-parse HEAD` (a local, agent-controlled value) when the
+# gh call failed, with only a warning. That degraded the one adversarially
+# sound boundary into a local read.
+#
+# DISCRIMINATING BY CONSTRUCTION: the local HEAD and the markers are made to
+# AGREE. Under the old fallback the comparison therefore SUCCEEDS and the merge
+# is ALLOWED (rc=0). Under fail-closed it is BLOCKED (rc=2). A test using a
+# mismatching local HEAD would block both before and after, proving nothing.
+
+make_sandbox_gh_fails() {
+  local sb
+  sb=$(make_sandbox)
+  # gh cannot resolve the HEAD: transient network, expired token, rate limit,
+  # and gh-not-installed all surface identically as a failed/empty result.
+  # headRefName + headRepository still answer, so exactly ONE thing fails.
+  cat > "$sb/bin/gh" <<'GHEOF'
+#!/bin/bash
+case "$*" in
+  *"pr view"*"headRefOid"*)     exit 1 ;;
+  *"pr view"*"headRefName"*)    echo "feature/GH-99-test" ;;
+  *"pr view"*"headRepository"*) echo "me2resh/apexyard" ;;
+  *) ;;
+esac
+exit 0
+GHEOF
+  chmod +x "$sb/bin/gh"
+  echo "$sb"
+}
+
+sb=$(make_sandbox_gh_fails)
+# The sandbox's local HEAD — the value the OLD fallback would have used.
+local_head=$(cd "$sb" && git rev-parse HEAD 2>/dev/null)
+# Markers written to MATCH that local HEAD: the setup most favourable to a
+# bypass, where every comparison passes under the old code.
+write_rex_marker "$sb" 99 "$local_head"
+write_ceo_marker_structured "$sb" 99 "$local_head"
+input=$(jq -nc --arg c "gh pr merge 99 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -qi "resolve"; then
+  echo "PASS [#1091: forge HEAD unresolvable + markers matching LOCAL head -> BLOCKED]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#1091: forge HEAD unresolvable + markers matching LOCAL head -> BLOCKED]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1091-fail-closed "
+fi
+
+# Control: gh healthy -> behaviour unchanged, markers at the forge HEAD pass.
+sb=$(make_sandbox)
+write_rex_marker "$sb" 99
+write_ceo_marker_structured "$sb" 99
+input=$(jq -nc --arg c "gh pr merge 99 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "0" ]; then
+  echo "PASS [#1091 control: gh healthy, markers at forge HEAD -> still ALLOWED]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#1091 control: gh healthy, markers at forge HEAD -> still ALLOWED]: rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1091-control-healthy "
+fi
+
+# me2resh/apexyard#1405 second-round review, Hakim H2: a missing required
+# library (_lib-extract-pr.sh or _lib-review-markers.sh) must BLOCK the
+# merge in DEFAULT bash, not just under POSIXLY_CORRECT. Before the
+# per-hook `_require_lib` guard, a missing library made `is_merge_command`
+# undefined; the negated `if ! is_merge_command "$COMMAND"; then exit 0;
+# fi` check then read the resulting "command not found" (127) as "not a
+# merge command" and exited 0 — a clean, deliberate-looking allow that the
+# dispatcher's fail-closed wrapper (AgDR-0169) cannot see, because nothing
+# about that exit code says a gate failed to load.
+for lib in _lib-extract-pr.sh _lib-review-markers.sh; do
+  for mode in default posix; do
+    sb=$(make_sandbox)
+    write_rex_marker "$sb" 300
+    write_ceo_marker_structured "$sb" 300
+    rm -f "$sb/.claude/hooks/$lib"
+    input=$(jq -nc --arg c "gh pr merge 300 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+    if [ "$mode" = "posix" ]; then
+      got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+        "echo '$input' | POSIXLY_CORRECT=1 bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+    else
+      got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+        "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+    fi
+    got_rc=$?
+    rm -rf "$sb"
+    label="missing-$lib-blocks-in-$mode-bash"
+    if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -qi "BLOCKED"; then
+      echo "PASS [$label]"; PASS=$((PASS+1))
+    else
+      echo "FAIL [$label]: want rc=2 + BLOCKED, got rc=$got_rc stderr=${got_stderr:0:300}" >&2
+      FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "
+    fi
+  done
+done
+
+# me2resh/apexyard#1403 comment (deferred item, addressed here): a missing
+# _lib-read-config.sh must not crash the whole script with a raw bash
+# "No such file or directory" error under POSIX mode. The library's read
+# of `review_markers.human_approver_title` (line ~180) is genuinely
+# OPTIONAL — this hook falls back to the "CEO" display title when the
+# library is absent — so that read gets a readability check BEFORE the
+# `.` call, not a `_require_lib`-style hard block. A SEPARATE, pre-existing
+# read further down (`review_markers.require_posted_review`, #1051) is
+# deliberately fail-closed when config_get_or is undefined: it must not
+# assume that check is off just because it cannot read the setting. So the
+# net, correct behaviour is: the gate still BLOCKS overall (via that
+# pre-existing check), but with the SAME clean BLOCKED message in both
+# default and POSIX-mode bash — never a raw, un-actionable bash crash that
+# only POSIX mode used to produce.
+for mode in default posix; do
+  sb=$(make_sandbox)
+  write_rex_marker "$sb" 301
+  write_ceo_marker_structured "$sb" 301
+  rm -f "$sb/.claude/hooks/_lib-read-config.sh"
+  input=$(jq -nc --arg c "gh pr merge 301 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+  if [ "$mode" = "posix" ]; then
+    got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+      "echo '$input' | POSIXLY_CORRECT=1 bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+  else
+    got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+      "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+  fi
+  got_rc=$?
+  rm -rf "$sb"
+  label="missing-optional-_lib-read-config.sh-clean-block-in-$mode-bash"
+  if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -qi "BLOCKED"; then
+    echo "PASS [$label]"; PASS=$((PASS+1))
+  else
+    echo "FAIL [$label]: want rc=2 + BLOCKED, got rc=$got_rc stderr=${got_stderr:0:300}" >&2
+    FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "
+  fi
+done
+
+# AgDR-0169 correction: _lib-merge-behind.sh is OPTIONAL, not a _require_lib
+# dependency, unlike _lib-extract-pr.sh and _lib-review-markers.sh above.
+# Its only job is to append an advisory note to a block that already fires
+# for another reason. A missing/unreadable copy must never turn a healthy,
+# fully-approved merge into a block — that would make an advisory-only
+# library load-bearing for the whole gate, the exact failure mode the
+# _require_lib guard above exists to prevent for the two REQUIRED libraries.
+sb=$(make_sandbox)
+write_rex_marker "$sb" 302
+write_ceo_marker_structured "$sb" 302
+rm -f "$sb/.claude/hooks/_lib-merge-behind.sh"
+input=$(jq -nc --arg c "gh pr merge 302 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+label="missing-optional-_lib-merge-behind.sh-does-not-block-a-healthy-merge"
+if [ "$got_rc" = "0" ]; then
+  echo "PASS [$label]"; PASS=$((PASS+1))
+else
+  echo "FAIL [$label]: want rc=0 (still allowed), got rc=$got_rc stderr=${got_stderr:0:300}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "
+fi
+
+# Mirror case: _lib-merge-behind.sh missing AND the merge is blocked for an
+# unrelated reason (missing Rex marker) -> still blocks, but the behind-base
+# note must not appear (is_pr_behind_base is undefined, so the note function
+# returns early instead of crashing or printing "command not found" noise).
+sb=$(make_sandbox)
+rm -f "$sb/.claude/hooks/_lib-merge-behind.sh"
+input=$(jq -nc --arg c "gh pr merge 303 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_BEHIND_BY=5 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+label="missing-optional-_lib-merge-behind.sh-blocks-cleanly-no-note"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "no recorded code-reviewer" \
+   && ! echo "$got_stderr" | grep -qi "also behind its base branch" \
+   && ! echo "$got_stderr" | grep -qi "command not found"; then
+  echo "PASS [$label]"; PASS=$((PASS+1))
+else
+  echo "FAIL [$label]: want rc=2, no behind-base note, no 'command not found', got rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "
+fi
+
+# --- me2resh/apexyard#1386: optional behind-base note on an EXISTING block ---
+#
+# block-unreviewed-merge.sh adds NO new blocking condition for a behind-base
+# branch. It only appends a note to a block that already fires for another
+# reason (here: missing Rex marker). These cases pin that:
+#   - the note appears when the compare API reports the PR behind (behind_by > 0)
+#   - the note does NOT appear when the PR is not behind
+#   - the note appears even when mergeStateStatus reports CLEAN — the exact
+#     gap #1386 reported: GitHub only reports mergeStateStatus=BEHIND when
+#     the base ruleset has strict_required_status_checks_policy=true, so a
+#     PR that is genuinely behind an unprotected base reports CLEAN, BLOCKED,
+#     or UNKNOWN instead. A check that read mergeStateStatus alone would
+#     never fire here — see _lib-merge-behind.sh.
+
+# Case: missing rex marker + compare API reports behind_by>0 -> still blocks
+# (rc=2), and the note names the behind-base branch as a likely reason.
+sb=$(make_sandbox)
+input=$(jq -nc --arg c "gh pr merge 1386 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_BEHIND_BY=5 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "no recorded code-reviewer" \
+   && echo "$got_stderr" | grep -qi "also behind its base branch"; then
+  echo "PASS [#1386: missing rex marker + behind_by>0 -> blocks AND names behind-base as a reason]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#1386: missing rex marker + behind_by>0 -> blocks AND names behind-base as a reason]: rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1386-behind-note "
+fi
+
+# Case: missing rex marker + compare API reports behind_by=0 -> still blocks
+# (rc=2), but the behind-base note must NOT appear (no false positive on a
+# PR that is NOT behind its base — the block has a different, unrelated
+# cause).
+sb=$(make_sandbox)
+input=$(jq -nc --arg c "gh pr merge 1387 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_BEHIND_BY=0 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "no recorded code-reviewer" \
+   && ! echo "$got_stderr" | grep -qi "also behind its base branch"; then
+  echo "PASS [#1386: missing rex marker + behind_by=0 -> blocks, no spurious behind-base note]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#1386: missing rex marker + behind_by=0 -> blocks, no spurious behind-base note]: rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1386-no-spurious-note "
+fi
+
+# Case (B1 regression pin): a PR that IS behind but whose mergeStateStatus
+# reads CLEAN — the exact combination #1386 observed on this repo (dev's
+# ruleset has strict_required_status_checks_policy=false, so a behind PR
+# never reports BEHIND). The note must still appear, because it is driven
+# by the compare API, not by mergeStateStatus.
+sb=$(make_sandbox)
+input=$(jq -nc --arg c "gh pr merge 1388 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_MERGE_STATE=CLEAN MOCK_BEHIND_BY=8 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -qi "also behind its base branch"; then
+  echo "PASS [#1386 B1: mergeStateStatus=CLEAN but behind_by>0 -> note still fires]"; PASS=$((PASS+1))
+else
+  echo "FAIL [#1386 B1: mergeStateStatus=CLEAN but behind_by>0 -> note still fires]: rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1386-behind-despite-clean "
+fi
+
+# Case: the note addresses the human approver, not the agent — it must not
+# read as an instruction the agent itself could carry out (Hakim MEDIUM,
+# #1406). "Ask the ... to" and "Do not update it yourself" must both appear.
+sb=$(make_sandbox)
+input=$(jq -nc --arg c "gh pr merge 1389 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_BEHIND_BY=3 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -qi "ask the .* to update" \
+   && echo "$got_stderr" | grep -qi "do not update it yourself"; then
+  echo "PASS [Hakim MEDIUM #1406: behind-base note addresses the user, not the agent]"; PASS=$((PASS+1))
+else
+  echo "FAIL [Hakim MEDIUM #1406: behind-base note addresses the user, not the agent]: rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}1406-note-addresses-user "
+fi
+
+# Case (A1 advisory): the same note also fires on the OTHER block that can
+# precede a behind-base merge attempt — a stale Rex marker (SHA mismatch),
+# not only a missing one. Rex's A1 suggestion: align the note with both
+# blocks the operator can actually hit.
+sb=$(make_sandbox)
+write_rex_marker "$sb" 1390 "$WRONG_SHA" "$TEST_REPO"
+input=$(jq -nc --arg c "gh pr merge 1390 --repo me2resh/apexyard --squash" '{tool_name:"Bash", tool_input:{command:$c}}')
+got_stderr=$(cd "$sb" && APEXYARD_OPS_DISABLE_PIN=1 MOCK_BEHIND_BY=4 PATH="$sb/bin:$PATH" bash -c \
+  "echo '$input' | bash .claude/hooks/block-unreviewed-merge.sh" 2>&1 >/dev/null)
+got_rc=$?
+rm -rf "$sb"
+if [ "$got_rc" = "2" ] && echo "$got_stderr" | grep -q "HEAD is now" \
+   && echo "$got_stderr" | grep -qi "also behind its base branch"; then
+  echo "PASS [A1: stale-Rex-marker block also gets the behind-base note]"; PASS=$((PASS+1))
+else
+  echo "FAIL [A1: stale-Rex-marker block also gets the behind-base note]: rc=$got_rc stderr=${got_stderr:0:400}" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}A1-stale-sha-note "
 fi
 
 # --- Summary ----------------------------------------------------------

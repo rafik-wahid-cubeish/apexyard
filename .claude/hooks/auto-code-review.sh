@@ -1,6 +1,6 @@
 #!/bin/bash
-# PostToolUse hook: after `gh pr create` succeeds, tell Claude to invoke the
-# code-reviewer agent (Rex) on the new PR automatically.
+# PostToolUse hook: after `gh pr create` succeeds, tell Claude to run the
+# code-reviewer agent (Rex) on the new PR.
 #
 # Mechanism: the hook writes a pending-review marker and exits with code 2
 # so the stderr message is surfaced back to Claude as an "error", which in
@@ -10,7 +10,12 @@
 #
 # The marker file at .claude/session/pending-reviews/<pr> is also read by
 # the merge-gate hook so a PR cannot be merged without a corresponding Rex
-# approval file at .claude/session/reviews/<pr>-rex.approved.
+# approval file at .claude/session/reviews/<owner>__<repo>__<pr>-rex.approved
+# (repo-qualified, AgDR-0060). This banner deliberately does NOT print that
+# path: quoting a literal marker path at an agent is the #1144 vector — the
+# reviewer obeys the path it is handed instead of resolving its own, and the
+# marker lands bare-number where no gate reads it. Name the review, never the
+# path.
 #
 # SUBAGENT-AWARE BANNER (me2resh/apexyard#843): this hook fires on ANY
 # `gh pr create`, regardless of which agent ran it. Twice (PRs #835, #842) a
@@ -28,10 +33,27 @@
 # no-op for that reader.
 #
 # The orchestrator branch also tells the caller to set the active-reviewer
-# session marker (.claude/session/active-reviewer) before spawning Rex —
-# without it, warn-review-marker-write.sh (upgraded to a BLOCKING gate in
-# #843) refuses the *-rex.approved write even from the real code-reviewer
-# agent.
+# session marker (resolved through active_reviewer_marker_path in
+# _lib-review-markers.sh — session-scoped since #1376, never the literal
+# .claude/session/active-reviewer string) before spawning Rex.
+# #843 made warn-review-marker-write.sh refuse that write without the marker;
+# #1026 returned it to ADVISORY (it warns, never blocks — see AgDR-0111,
+# which supersedes AgDR-0109's block-on-resolved-target decision), so
+# the marker now suppresses a spurious warning rather than unblocking a write.
+# Set it anyway: the convention is what keeps a real review distinguishable
+# from an author reviewing their own work, and the merge gate is what enforces.
+#
+# TIER-AWARE NOTE (me2resh/apexyard#1064, AgDR-0116): the banner below keeps
+# "Rex runs on every PR" completely unconditional — that instruction is
+# NEVER softened by tier, because block-unreviewed-merge.sh requires the Rex
+# marker regardless of tier and is not touched by this change. What IS
+# tier-conditional, per .claude/rules/right-size-ceremony.md, is the ROLE
+# CHAIN around Rex (Security Auditor / Solution Architect / UI Designer) —
+# those already only fire on their own diff/path triggers. Do not read the
+# tier note below as license to skip Rex on a Lean diff; it only ever
+# changes Rex's OWN review depth (reduced-scope, per
+# .claude/agents/code-reviewer.md § "Reduced-Scope Review"), never whether
+# Rex runs.
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
@@ -94,9 +116,12 @@ isolated context:
 
   You CANNOT nest the Agent tool, so you cannot spawn Rex yourself. Do NOT
   attempt to review this PR, do NOT post a review comment, and do NOT write
-  ANY file under .claude/session/reviews/ (including *-rex.approved) —
-  warn-review-marker-write.sh will BLOCK that write anyway (#843), but the
-  instruction stands regardless. Report the PR back to the orchestrator
+  ANY file under .claude/session/reviews/ (including *-rex.approved).
+  Nothing will mechanically stop you: warn-review-marker-write.sh only
+  WARNS (advisory since #1026 — AgDR-0111). That is precisely why this
+  instruction matters. Writing that file would record a review that never
+  happened, and the human approving the merge would be relying on it.
+  Report the PR back to the orchestrator
   plainly ("PR ${PR_REF} created: ${PR_URL}") and stop. The orchestrator
   runs the real, independent Rex review after you hand back.
 --------------------------------------------------------------------------
@@ -109,14 +134,38 @@ build sub-agent just handed this PR back to you):
 
   The skill sets the active-reviewer session marker, spawns Rex, and
   clears the marker for you — you should NOT set that marker by hand.
-  The skill's marker management is what authorises Rex's *-rex.approved
-  write through the blocking gate (#843); spawning the code-reviewer
-  agent directly without it leaves the write blocked by
-  warn-review-marker-write.sh — by design.
+  Use the skill rather than spawning the code-reviewer agent directly:
+  it is what makes the review a separate, sanctioned pass instead of the
+  author grading their own work. (The marker also suppresses an advisory
+  warning on Rex's own marker write, but that is a side effect, not the
+  reason — the hook warns and never blocks since #1026.)
+
+  ONE EXCEPTION, and only for you (me2resh/apexyard#1161). After the review
+  returns, confirm the approval marker exists. If the review ran "in the
+  background" and posted nothing to the PR, the harness ran its OWN bundled
+  /code-review instead of ApexYard's skill. That bundled skill knows nothing
+  about these markers, so re-running it cannot help. Only in that case: set
+  the active-reviewer marker yourself, then spawn the code-reviewer agent
+  (Rex) directly with the Agent tool. A CHANGES REQUESTED verdict is NOT this
+  case — a real review that requests changes writes no approval marker by
+  design, and the fix is to address the findings. Never write the approval
+  marker yourself in either case.
 --------------------------------------------------------------------------
 
-The merge-gate hook will block \`gh pr merge\` for this PR until a Rex approval
-file exists at .claude/session/reviews/${PR_NUMBER:-<pr>}-rex.approved.
+CEREMONY TIER (.claude/rules/right-size-ceremony.md, AgDR-0116): Rex runs on
+EVERY PR, full stop — that instruction above is unconditional and does not
+change by tier. What varies by tier is the ROLE CHAIN layered around Rex
+(Security Auditor / Solution Architect / UI Designer) — those already only
+activate on their own diff/path triggers, never on a self-declared tier. A
+Lean-tier diff (docs / config-text, small, reversible, no behavior change,
+non-security-path) still gets a Rex pass — in REDUCED SCOPE per
+.claude/agents/code-reviewer.md § "Reduced-Scope Review" — never a bypass.
+
+The merge-gate hook will block \`gh pr merge\` for this PR until Rex's approval
+marker exists. Do NOT quote a marker path when you invoke the review — the
+reviewer resolves its own repo-qualified path (me2resh/apexyard#1144); a path
+handed to it in a prompt overrides that and lands the marker where no gate
+reads it.
 
 This message is a reminder from the PostToolUse hook, not a tool error. The PR
 was created successfully.

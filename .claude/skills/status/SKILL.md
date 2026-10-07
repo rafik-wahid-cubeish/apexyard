@@ -4,6 +4,10 @@ description: Project snapshot — git state, open PRs + CI, recent merges, in-pr
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
+
 # /status — Current Status Snapshot
 
 A focused "where am I" view. Where `/inbox` shows what's waiting on you and `/projects` shows portfolio health, `/status` shows the **current state of work**: branch, dirty files, recent commits, open PRs, and the in-progress issue.
@@ -252,7 +256,7 @@ ln -s "$(pwd)/bin/apexyard" ~/.local/bin/apexyard
 apexyard status
 ```
 
-The shim walks up from `$PWD` looking for the apexyard fork root (`onboarding.yaml` + `apexyard.projects.yaml`), then runs the same briefing helper. No PATH-shadowing of the `claude` binary, no recursion into Claude Code — pure `bash` end-to-end.
+The shim walks up from `$PWD` looking for the apexyard fork root — the `.apexyard-fork` marker (split-portfolio v2) OR the legacy `onboarding.yaml` + `apexyard.projects.yaml` pair (v1) — then runs the same briefing helper. No PATH-shadowing of the `claude` binary, no recursion into Claude Code — pure `bash` end-to-end.
 
 ## Rules
 

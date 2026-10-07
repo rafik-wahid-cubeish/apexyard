@@ -16,9 +16,18 @@ model: sonnet
 
 ---
 
+## Writing standard
+
+Before you write a durable artifact, read `.claude/rules/writing-standard.md`.
+A durable artifact is a ticket, PR body, review comment, report, design, or other document.
+Use the controlled technical writing profile in that rule.
+The rule does not apply to chat replies.
+
 ## Purpose
 
 Monitor dependencies for vulnerabilities, outdated packages, and license compliance.
+
+**Relationship to `/audit-deps` and the CI pipeline**: this agent, the `/audit-deps` skill, and `golden-paths/pipelines/dependency-audit.yml` cover the same ground from three angles — the skill is the operator-invoked on-demand run, the pipeline is the scheduled CI enforcement, and this agent is the reasoning/triage layer that interprets their output (CVE triage, license disposition, upgrade recommendations). Keep the three consistent; the skill and pipeline are the source of truth for *what* is scanned.
 
 ## Trigger Conditions
 
@@ -49,7 +58,7 @@ Run an audit when:
 npm audit --json > audit-results.json
 ```
 
-Group results by severity (`critical`, `high`, `moderate`, `low`) and identify affected packages and paths.
+Group results by severity (`critical`, `high`, `moderate`, `low` — npm audit's output vocabulary; `moderate` maps to **Medium** in reports, matching the Head of Security response table) and identify affected packages and paths.
 
 **Action by severity**:
 
@@ -57,7 +66,7 @@ Group results by severity (`critical`, `high`, `moderate`, `low`) and identify a
 |----------|--------|
 | Critical | Immediate ticket, block deploys |
 | High | Ticket this week |
-| Moderate | Ticket this sprint |
+| Medium | Ticket this sprint |
 | Low | Track in backlog |
 
 ### 2. Outdated Packages
@@ -115,7 +124,7 @@ Check for:
 |----------|-------|-------------------|
 | Critical | 0 | — |
 | High     | 2 | project-a |
-| Moderate | 5 | project-a, project-b |
+| Medium | 5 | project-a, project-b |
 | Low      | 3 | project-b |
 
 ### Critical / High Vulnerabilities
@@ -186,7 +195,7 @@ References:
 | Severity | Channel | Audience |
 |----------|---------|----------|
 | Critical / High | Realtime (Slack / pager) | Head of Security, Tech Lead |
-| Moderate | Weekly report | Engineering team |
+| Medium | Weekly report | Engineering team |
 | Low | Weekly report | Engineering team |
 
 ---

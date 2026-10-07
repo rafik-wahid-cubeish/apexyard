@@ -1,8 +1,8 @@
 # Codex Adapter
 
-ApexYard's canonical runtime still lives in `.claude/`: skills, agents, hooks,
-rules, and hook wiring are authored there first. Codex support is generated from
-that source of truth so the two agent surfaces do not drift by hand.
+ApexYard's source of truth remains `.claude/`. It contains the skills, agents,
+hooks, rules, and hook wiring. The Codex adapter is generated from those files.
+This keeps the two agent surfaces aligned.
 
 Decision record: [`AgDR-0088`](agdr/AgDR-0088-codex-adapter-generation.md). For where Codex sits among all supported harnesses (and the shared-core architecture behind every adapter), see the [harness support index](harnesses/README.md).
 
@@ -12,24 +12,23 @@ Decision record: [`AgDR-0088`](agdr/AgDR-0088-codex-adapter-generation.md). For 
 bin/sync-codex-adapter.sh
 ```
 
-The command emits:
+The command generates:
 
 - `.claude/skills/` to `.agents/skills/`
 - `.claude/agents/*.md` to `.codex/agents/*.toml`
 - `.claude/settings.json` to `.codex/hooks.json`
+- adapter ownership metadata to `.codex/apexyard-adapter.json`
 
-It does **not** copy `.claude/hooks/` into `.codex/hooks/`. The generated
-`hooks.json` keeps the existing commands that exec the unmodified
-`.claude/hooks/*.sh` scripts. That keeps gate decisions, session markers,
-review markers, and trust-chain path checks in the same audited bash files that
-Claude Code uses today.
+The command does **not** copy `.claude/hooks/` into `.codex/hooks/`. The
+generated `hooks.json` runs the original `.claude/hooks/*.sh` scripts. Gate
+decisions, session markers, review markers, and trust-chain checks stay in the
+same audited Bash files that Claude Code uses.
 
-Codex documents repo-local hook loading from `.codex/hooks.json`; trusted
-project hooks run from the session working directory, and `PreToolUse` hooks can
-block by exiting `2` ([Codex hooks docs](https://developers.openai.com/codex/hooks)).
-The adapter test therefore proves the generated command path preserves the hook
-stdin and exit-code contract. Live Codex coverage still depends on Codex's hook
-runtime and trust settings.
+Codex loads project hooks from `.codex/hooks.json`. Trusted hooks run from the
+session working directory. A `PreToolUse` hook can block by exiting `2`
+([Codex hooks docs](https://developers.openai.com/codex/hooks)). The adapter
+test checks the generated command, input, and exit-code contract. Live coverage
+still depends on Codex hook loading and trust settings.
 
 Claude Code's handler-level `if` predicates are not part of Codex's documented
 hook handler shape. During generation, those predicates are compiled into the
@@ -53,6 +52,33 @@ bin/sync-codex-adapter.sh --check
 Use `--check` when generated adapter files are present and you want to verify
 they still match `.claude/`. It exits non-zero on drift and prints the files that
 need regeneration.
+
+## Update Reconciliation
+
+```bash
+bin/sync-codex-adapter.sh --reconcile-installed
+```
+
+This mode refreshes and verifies an existing ApexYard Codex adapter, but is a
+silent no-op on forks where Codex support was never installed. New
+installations are identified by `.codex/apexyard-adapter.json`; adapters from
+before that manifest are recognised only when all three generated surfaces
+exist: `.agents/skills/`, `.codex/agents/`, and `.codex/hooks.json`. Drift
+detection (here and in `--check` / `--check-installed`) only ever compares the
+adapter's owned paths — a hand-authored file living alongside the generated
+output under `.agents/` or `.codex/` is left alone.
+
+`/update` runs this reconciliation automatically before every successful exit,
+including the already-current path. Use `--skip-adapter-sync` only as a
+troubleshooting escape hatch.
+
+For pre-manifest installs whose old generated `$update` skill cannot yet
+contain that instruction, the already-delegated `check-upstream-drift.sh`
+SessionStart hook runs a **read-only** `bin/sync-codex-adapter.sh
+--check-installed` on every session and prints an advisory nudge if the
+installed adapter has drifted. This hook never writes to the tree — it only
+tells the operator to run the command above (or `/update`). It does not block
+session startup.
 
 ## Clean Regeneration
 

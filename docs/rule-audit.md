@@ -12,6 +12,42 @@ This audit is the **single view** of the governance surface ApexYard ships with.
 
 ---
 
+## Trust-chain hooks: control vs backstop
+
+The hooks that gate merges and approval markers are **not all the same kind of thing**, and reading
+them as if they were is how the framework spent four rounds patching one file. Per
+[AgDR-0104](agdr/AgDR-0104-trust-chain-controls-vs-backstops.md), every trust-chain hook is labelled
+in its own header as one of two classes:
+
+| Class | Decides on | Expectation | Examples |
+|-------|-----------|-------------|----------|
+| **Control** | **Structured state** — a file's contents, a SHA or CI conclusion reported by the forge | **Fail-closed**: if it cannot evaluate its precondition, it must block, never allow | `block-unreviewed-merge.sh`, `block-merge-on-red-ci.sh`, `require-design-review-for-ui.sh`, `require-architecture-review.sh` |
+| **Backstop** | **The text of a command** — inherently ambiguous | Advisory. Warns, never blocks. The one known evasion (split path, #1026) is a documented limit, not an open bug | `warn-review-marker-write.sh` |
+
+**The guidance, in one line:** a trust-chain hook that reads command text is a *backstop* to a
+server-side gate and should warn; only a hook reading structured state is a *control* and should
+fail closed.
+
+Why the split is load-bearing: AgDR-0104 established that "a security gate implemented as
+regex/substring matching over bash command *text* cannot be made sound — the ways to express a path
+(`$VAR`, `$(…)`, concat, here-doc, symlink, `printf`) are unbounded." A backstop tuned to block
+therefore fails in *both* directions at once — it misses real writes spelled unusually, and it
+blocks ordinary commands that merely *mention* a marker (a grep pattern, a commit message, a code
+review, a JSON payload). [AgDR-0109](agdr/AgDR-0109-marker-write-gate-is-a-backstop.md) records the
+evidence and applies the backstop label; [AgDR-0111](agdr/AgDR-0111-marker-gate-plain-advisory.md)
+is the record that owns the return to plain advisory (0109 had chosen a narrower
+block-on-resolved-target design, superseded).
+
+Real merge integrity does not rest on the backstop. It rests on the per-PR human approval plus the
+controls' comparison of marker SHAs against forge-reported HEAD — and, for adopters who want a gate
+no local process can reach at all, on the forge's own server-side protection (GitHub branch
+protection; GitLab protected branches + MR approval rules).
+
+**If you are about to add a pattern to a backstop so it catches one more spelling — don't.** That is
+the loop this section exists to stop.
+
+---
+
 ## Audit table
 
 Columns:
@@ -82,7 +118,7 @@ Columns:
 
 | rule | source | enforced by | mechanizable? | proposed hook / reason advisory |
 |------|--------|-------------|---------------|---------------------------------|
-| HARD STOP — run `/decide` before any technical decision | `.claude/rules/agdr-decisions.md § Trigger Patterns` | prose (self-discipline) | no | trigger patterns are chat-output phrases; linting assistant prose was rejected for the same reason as in `ticket-vocabulary.md` [^self-discipline] |
+| HARD STOP — run `/decide` before a **material** technical decision (architectural, hard to reverse, or cross-cutting) | `.claude/rules/agdr-decisions.md § The threshold` | prose (self-discipline) | no | the threshold is a judgment about blast radius, not a lintable chat-output phrase; linting assistant prose was rejected for the same reason as in `ticket-vocabulary.md` [^self-discipline]. Narrowed from "any technical decision" in [#997][997] — the blanket form manufactured the AgDR→Tech-Lead→Solution-Architect handover churn fixed in [#995][995] |
 | AgDR required for architecture / infra commits | `.claude/rules/agdr-decisions.md § Enforcement` | `require-agdr-for-arch-changes.sh` | yes | mechanized (AgDR-0001); narrow default path list, project-config override via `.architecture_paths` |
 | AgDR required at PR time when diff touches architecture paths OR adds a new dependency | `.claude/rules/agdr-decisions.md § Enforcement` | `require-agdr-for-arch-pr.sh` | yes | mechanized ([#112][112]); fires on `gh pr create`, config via `.agdr_trigger_paths[]` + `.agdr_trigger_dep_files[]`; skip marker `<!-- agdr: not-applicable -->` bypasses with a visible warning |
 | Extend default `architecture_paths` to cover SAM / Helm / K8s / Serverless Framework | — | — | deferred | [#25][25] — default list is deliberately narrow; follow-up broadens safely |
@@ -96,6 +132,19 @@ Columns:
 | `Ticket`, `#N`, `blocked by #N` refer ONLY to real GitHub issues | `.claude/rules/ticket-vocabulary.md § The rule`, `CLAUDE.md § Quality Rules` | prose + downstream backstops | partial | prose is primary; `validate-pr-create.sh` and `verify-commit-refs.sh` catch the symptoms in durable artefacts [^self-discipline] |
 | Never apply tracker notation to in-conversation plan items | `.claude/rules/ticket-vocabulary.md § The rule` | prose | no | chat-output rule, same class as the `/decide` triggers [^self-discipline] |
 | Crossing "plan item → tracker item" requires an explicit `gh issue create` | `.claude/rules/ticket-vocabulary.md § The boundary-crossing rule` | prose | no | workflow rule, not a mechanical check |
+
+### 5a. Evidence grounding
+
+| rule | source | enforced by | mechanizable? | proposed hook / reason advisory |
+|------|--------|-------------|---------------|---------------------------------|
+| Factual claims must not exceed their evidence; observations stay scoped to their environment and time; mutable state is re-checked; uncertainty is preserved; identifiers, results, and completion are never invented | `.claude/rules/evidence-grounding.md § The rule`, `CLAUDE.md § Quality Rules` | prose + human-adjudicated regression cases | no | Reasoning provenance is not observable to a shell hook. Text matching would create false blocks and false confidence; static tests verify wiring only (AgDR-0124, [#1162][1162]) [^self-discipline] |
+
+### 5b. Proportionate work and ceremony
+
+| rule | source | enforced by | mechanizable? | proposed hook / reason advisory |
+|------|--------|-------------|---------------|---------------------------------|
+| Classify a change as Lean / Standard / Heavy by path class, blast radius, and behavior surface; run only the review chain that tier needs; security, trust chain, and migrations never go Lean; ambiguity rounds up | `.claude/rules/right-size-ceremony.md § The tiers`, `CLAUDE.md § Quality Rules` | prose (self-discipline) + the existing Heavy gates | no | The `Agent`-spawn boundary has no `PreToolUse` matcher (AgDR-0056) and a blocking tier classifier would reintroduce the rigidity the rule removes (AgDR-0107). The Heavy gates stay mechanical. Rex runs at every tier (AgDR-0116) [^self-discipline] |
+| The same tier sizes planning, implementation, and artifact creation: smallest change that meets the acceptance criteria; reuse before adding; a demonstrated need for every new dependency, abstraction, service, or durable artifact; advice stays conversational | `.claude/rules/right-size-ceremony.md § Proportionate work`, `CLAUDE.md § Quality Rules` | prose + human-adjudicated regression cases | no | A hook can count files but cannot judge whether a new module or document was needed; static tests verify wiring only (AgDR-0125, [#1163][1163]) [^self-discipline] |
 
 ### 6. Code standards
 
@@ -158,15 +207,22 @@ Columns:
 
 ---
 
+### 11a. Writing standard
+
+| rule | source | enforced by | mechanizable? | proposed hook / reason advisory |
+|------|--------|-------------|---------------|---------------------------------|
+| New and changed artifacts use the controlled technical writing profile. They use short complete sentences, active voice, one term for one meaning, and clear lists. They retain evidence and uncertainty. | .claude/rules/writing-standard.md, producer instructions, and review skills | reviewer checks + regression cases | partial | Static tests confirm that producers and reviewers load the profile. Reviewers assess sentence structure, meaning, and vocabulary. A checker cannot prove full dictionary compliance. See AgDR-0134 and [#1164][1164]. |
+| Machine text uses one clear instruction in each sentence. Durable artifacts use the same controlled technical writing profile. | .claude/rules/writing-standard.md | reviewer checks | partial | Static checks can find missing wiring. Reviewers assess the text. The framework does not claim certified compliance. |
+
 ## Summary
 
 | bucket | count |
 |--------|-------|
 | mechanized (`yes` — hook / agent enforces it fully) | 29 |
 | partially mechanized (`partial` — hook + prose combination) | 6 |
-| advisory (`no` — stays prose by design) | 36 |
+| advisory (`no` — stays prose by design) | 39 |
 | deferred to a follow-up ticket (`deferred`) | 5 |
-| **total rows** | **76** |
+| **total rows** | **79** |
 | deferred tickets referenced | 6 ([#15][15], [#20][20], [#21][21], [#22][22], [#23][23], [#25][25]) |
 
 The count of deferred *rows* (5) and deferred *tickets* (6) differ because [#15][15] is a meta-chore (resolve `.claude/` duplication between ops-repo and apexyard upstream) that gets one row in the onboarding section, while the commit-related tickets [#20][20] and [#22][22] share a row via `validate-branch-name.sh` + `validate-pr-create.sh`.
@@ -202,3 +258,8 @@ The spread confirms what AgDR-0001 set out to make true: the **high-blast-radius
 [107]: https://github.com/me2resh/apexyard/issues/107
 [110]: https://github.com/me2resh/apexyard/issues/110
 [112]: https://github.com/me2resh/apexyard/issues/112
+[1162]: https://github.com/me2resh/apexyard/issues/1162
+[1163]: https://github.com/me2resh/apexyard/issues/1163
+[995]: https://github.com/me2resh/apexyard/issues/995
+[997]: https://github.com/me2resh/apexyard/issues/997
+[1164]: https://github.com/me2resh/apexyard/issues/1164

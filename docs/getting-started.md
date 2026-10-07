@@ -1,6 +1,7 @@
 # Getting Started with ApexYard
 
-Short version of the setup flow. For the full walkthrough (directory layout, daily workflow, upgrade path, FAQ) see [`multi-project.md`](multi-project.md).
+This page gives the short setup flow. See [`multi-project.md`](multi-project.md)
+for the directory layout, daily workflow, upgrade path, and FAQ.
 
 ---
 
@@ -8,18 +9,23 @@ Short version of the setup flow. For the full walkthrough (directory layout, dai
 
 - A GitHub account and an org you can fork into
 - [Claude Code](https://claude.com/claude-code) installed
-- [GitHub CLI (`gh`)](https://cli.github.com) installed (optional but recommended)
+- [GitHub CLI (`gh`)](https://cli.github.com) installed (recommended, but optional)
 - [`jq`](https://jqlang.org/download/) installed — required. Framework hooks use jq to read `.claude/project-config.json` overrides; without it your overrides silently no-op. `brew install jq` / `apt-get install jq` / `dnf install jq` depending on platform. `/setup` refuses to run without it, and a SessionStart banner surfaces the gap if jq disappears later. See [AgDR-0038](agdr/AgDR-0038-jq-as-hard-dependency.md) for the rationale.
-- **Windows**: [Git for Windows](https://gitforwindows.org) (which bundles Git Bash) or WSL — required. `.claude/hooks/*.sh` are bash scripts; native `cmd.exe`/PowerShell can't run them. This already works today (the ancestor-directory-walk hang some Windows users hit on `C:`-drive paths was fixed in [#691](https://github.com/me2resh/apexyard/issues/691)) — this is just making the requirement explicit, same shape as the `jq` line above.
+- **Windows**: Use [Git for Windows](https://gitforwindows.org) or WSL. The
+  `.claude/hooks/*.sh` files use Bash. Native `cmd.exe` and PowerShell cannot
+  run them. The `C:`-drive path issue reported in [#691](https://github.com/me2resh/apexyard/issues/691)
+  is fixed.
 - Basic familiarity with Claude Code's `CLAUDE.md` system
 
 ---
 
 ## Step 1: Fork apexyard on GitHub
 
-Your ops repo **is** a fork of apexyard. One repo, no nested installs.
+Your ops repo is a fork of ApexYard. It is one repository with no nested install.
 
-Visit [`github.com/me2resh/apexyard`](https://github.com/me2resh/apexyard), **Star** it, then **Fork** it into your org. Rename the fork if you want (`your-org/ops`, `your-org/apex`, or keep it as `apexyard` — GitHub handles the rename cleanly).
+Visit [`github.com/me2resh/apexyard`](https://github.com/me2resh/apexyard).
+Star it, then fork it into your organisation. Keep `apexyard`, or rename the
+fork to a name such as `your-org/ops`.
 
 Then clone your fork locally:
 
@@ -35,13 +41,18 @@ git clone https://github.com/your-org/apexyard.git
 cd apexyard
 ```
 
-Add the upstream remote so you can pull future updates:
+Add the upstream remote so you can pull updates later:
 
 ```bash
 git remote add upstream https://github.com/me2resh/apexyard.git
 ```
 
-Later, `git fetch upstream && git merge upstream/main` pulls the latest apexyard improvements into your fork.
+Later, fetch and merge from `upstream/main` to update your fork:
+
+```bash
+git fetch upstream
+git merge upstream/main
+```
 
 ---
 
@@ -137,27 +148,25 @@ Create an AgDR.
 
 ---
 
-## Optional: Terminal push hook (`core.hooksPath`)
+## Terminal push hook (`core.hooksPath`)
 
 The framework ships a `.githooks/pre-push` hook that runs the same check set as the Claude Code `pre-push-gate.sh` hook — markdownlint, shellcheck, and the subpack extraction smoke test — for terminal `git push` commands.
 
 The Claude Code hook (`pre-push-gate.sh`) only fires on pushes made _through Claude Code_. The git hook covers pushes made directly from the terminal.
 
-### One-time opt-in per clone
+### Installed automatically by `/setup`
+
+As of me2resh/apexyard#1086, `/setup` runs `bin/install-git-hooks.sh` for you, so a fresh ops-fork clone that's been through `/setup` already has `core.hooksPath` pointing at `.githooks`. A `check-git-hooks-installed.sh` SessionStart advisory also warns — same non-blocking shape as `check-upstream-drift.sh` — if a clone's `core.hooksPath` is unset, stale (points at a deleted directory), or a leftover pointer into a different clone's `.git/hooks`.
+
+If you skipped `/setup`, or want to run it by hand:
 
 ```bash
-git config core.hooksPath .githooks
+bash bin/install-git-hooks.sh
 ```
 
-Run this once inside your apexyard clone. Git then picks up `.githooks/pre-push` on every `git push` regardless of how you invoke it.
+Idempotent — safe to re-run. Repairs the stale-pointer cases above automatically; refuses to overwrite a `core.hooksPath` you set to something else on purpose unless you pass `--force`. See `bash bin/install-git-hooks.sh --help`.
 
-To enable it globally for all clones of apexyard (useful if you work across multiple machines or re-clone often):
-
-```bash
-git config --global core.hooksPath .githooks
-```
-
-Note: `--global` affects every git repo on your machine, not just apexyard. If other repos ship their own hooks under `.git/hooks/`, those will be shadowed. The safest approach is per-clone.
+`core.hooksPath` is per-clone git config (never committed), so this needs to run once per clone — that's exactly why `/setup` calls it for the ops fork rather than leaving it as a one-time manual step to remember. **`/handover` deliberately does NOT call it** against a freshly-cloned managed-project workspace: the installer's only gate is "does a `.githooks/` directory exist," with no provenance check, so pointing it at an arbitrary just-cloned third-party repo hands *that repo's own* committed hook scripts execution on the very next ordinary git operation — no push required (confirmed HIGH finding, PR #1087 security review). See the "1.5-clone" step in `.claude/skills/handover/SKILL.md` for the full rationale, and me2resh/apexyard#1088 for the open follow-up on giving a managed-project clone's own terminal pushes protection without this risk. `--global` also works (`git config --global core.hooksPath .githooks`) if you want every clone on a machine covered at once, but note it affects every git repo on that machine, not just apexyard — if other repos ship their own hooks under `.git/hooks/`, those get shadowed. Per-clone (what the installer does by default) is the safer default.
 
 ### Missing tools degrade gracefully
 

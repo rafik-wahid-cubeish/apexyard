@@ -1,54 +1,27 @@
 #!/bin/bash
-# Shared PR-number and repo extraction for the merge-gate hooks:
-#   - block-unreviewed-merge.sh
-#   - require-design-review-for-ui.sh
-#   - require-architecture-review.sh
-#   - block-merge-on-red-ci.sh
+# Shared PR and repo extraction for merge-gate hooks. The hooks are:
+# block-unreviewed-merge.sh, require-design-review-for-ui.sh,
+# require-architecture-review.sh, and block-merge-on-red-ci.sh.
 #
-# Not a hook itself (prefixed with `_lib-` so it's never wired as one). Sourced
-# by the hooks above via `. "$(dirname "$0")/_lib-extract-pr.sh"`.
+# This file is a library, not a hook. The merge gates source it and share the
+# same tested parser. Keep parsing here instead of duplicating it in a hook.
+# The shared parser prevents API merge forms from bypassing the gates, as the
+# original GitHub API incident showed (#47).
 #
-# WHY THIS EXISTS
-# ---------------
-# The merge gates originally only matched `gh pr merge <N>`. Incident (#47):
-# merges via `gh api repos/<owner>/<repo>/pulls/<N>/merge -X PUT` silently
-# bypassed all three gates because neither the matcher nor the PR-number
-# extraction knew about the API shape. This helper gives every gate a single,
-# tested way to recognise both shapes:
+# The parser covers GitHub and GitLab CLI and API merge forms. Examples:
+#   gh pr merge 42 --squash
+#   gh api repos/owner/repo/pulls/42/merge -X PUT
+#   glab mr merge 42 -R owner/repo
+#   glab api projects/owner%2Frepo/merge_requests/42/merge
 #
-#   1. `gh pr merge 42 --squash`                                  → PR is 42
-#   2. `gh api repos/owner/repo/pulls/42/merge -X PUT`            → PR is 42
-#
-# Any tool that edits one of the three merge hooks MUST keep calling this
-# helper, not re-implement the parsing inline. That's the whole point.
-#
-# USAGE
-# -----
+# Usage:
 #   . "$(dirname "$0")/_lib-extract-pr.sh"
 #   if ! is_merge_command "$COMMAND"; then exit 0; fi
 #   PR_NUMBER=$(extract_pr_number "$COMMAND")
 #
-# FORGE-AWARENESS (#764)
-# ----------------------
-# The gates originally spoke only GitHub. A GitLab-forge project (`tracker.kind:
-# glab`) merges via `glab mr merge <iid>` — a shape neither the matcher nor this
-# helper recognised, so the gates silently did not fire (an ungated-merge hole,
-# the forge analog of the #47 `gh api` bypass). This helper now recognises both
-# forges' merge shapes and resolves MR/PR state via the matching CLI:
-#
-#   3. `glab mr merge 42 -R owner/repo`                           → MR is 42
-#   4. `glab api projects/owner%2Frepo/merge_requests/42/merge`   → MR is 42
-#
-# Shape 4 (#767) is the GitLab raw-API merge — the exact forge analog of the #47
-# `gh api …/pulls/<N>/merge` bypass. Gating only `glab mr merge` (shape 3) while
-# leaving the API passthrough open would re-create #47 on GitLab, so both glab
-# shapes are recognised (matched with `Bash(glab api *)` in settings.json, the
-# same way the gh CLI shape is paired with `Bash(gh api *)`).
-#
-# The gh path is unchanged byte-for-byte; glab is additive. Forge selection for
-# the CLI-calling resolvers goes through `tracker_kind` from `_lib-tracker.sh`
-# (gh + glab coincide with github + gitlab per #762); the shape detectors read
-# the command text directly.
+# GitLab support is additive. Forge selection uses tracker_review_kind. Shape
+# detection reads the command text directly. CLI state resolution uses the
+# matching forge adapter.
 #
 # CI-STATUS RESOLUTION (#790)
 # ----------------------------
@@ -92,27 +65,94 @@
 # `extract_repo_from_command` each gained a dedicated wrapper-arg extraction
 # step using `_extract_wrapper_arg` (quoted-or-bare positional-token parsing,
 # regex/parameter-expansion only — no `eval` of the command text, ever).
+#
+# JSON-ESCAPED SEPARATORS IN THE RAW-PAYLOAD FALLBACK (#973, a residual
+# finding from Hakim's #969 review of the #965 fix)
+# ------------------------------------------------------------------------
+# #965 (see the four call sites in block-unreviewed-merge.sh,
+# block-merge-on-red-ci.sh, require-design-review-for-ui.sh, and
+# require-architecture-review.sh) added a jq-free fallback: when jq is
+# unavailable, each hook calls `is_merge_command "$INPUT"` directly against
+# the RAW, still-JSON-encoded payload text instead of the jq-decoded
+# command string. That works because the command's own words (`gh`, `pr`,
+# `merge`, digits) survive JSON string-encoding unchanged — EXCEPT for the
+# command's *separators*, when those separators are themselves characters
+# JSON must escape: a literal tab encodes as the two-character sequence
+# `\t`, and some encoders emit `\uXXXX` or `\/` for other bytes. Those
+# two-character escape sequences are not whitespace to `grep -E`'s `\s`
+# class, so `is_merge_command`'s `\bgh\s+pr\s+merge\b` pattern silently
+# fails to match a merge command whose separators are JSON-escaped —
+# exactly while jq (the thing that would normally decode them into real
+# whitespace) is unavailable. A gate that can't evaluate its own
+# precondition must fail closed, not quietly no-op on a payload that IS
+# merge-shaped once decoded.
+#
+# `_normalize_json_escapes` (below) is a small, best-effort decoder for
+# the handful of escape shapes that matter here — NOT a full JSON string
+# parser, the same "regex/parameter-expansion only, sufficient for the
+# shapes real callers emit" discipline as `_extract_wrapper_arg` above.
+# It is called ONLY at the four hooks' raw-payload fallback call sites
+# (`is_merge_command "$(_normalize_json_escapes "$INPUT")"`), never from
+# inside `is_merge_command` itself and never on the normal jq-present
+# path: jq has ALREADY correctly decoded these same escapes for that path
+# (that's what `jq -r` does), so re-normalizing already-decoded text would
+# be redundant at best and, for the rare case of a command that legitimately
+# contains a literal backslash-t/backslash-n substring (e.g. inside a sed
+# script), actively wrong — it would corrupt real command text that jq had
+# already decoded correctly. Keeping the two paths separate is what makes
+# this change safe for the jq-present callers: their behaviour is provably
+# unchanged because they never call the new function at all.
 
-# Lazily source the tracker lib so `tracker_kind` is available for forge
+# Lazily source the tracker lib so `tracker_review_kind` is available for forge
 # resolution. Guarded: only source if not already defined and the lib is
-# present. tracker_kind defaults to "gh" with no config, preserving gh behaviour.
-if ! command -v tracker_kind >/dev/null 2>&1; then
-  _lib_extract_pr_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
+# present. tracker_review_kind defaults to "gh" with no config, preserving gh behaviour.
+if ! command -v tracker_review_kind >/dev/null 2>&1; then
+  # ${BASH_SOURCE[0]} is bash-only and unset under zsh (#1025) — the `:-`
+  # default avoids a hard "parameter not set" error, but an empty value
+  # still makes `dirname` resolve to ".", i.e. the CALLER's cwd rather than
+  # this lib's real directory, which usually (harmlessly) misses the `-f`
+  # check below. The git-rev-parse fallback is the actual portability fix.
+  _lib_extract_pr_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd 2>/dev/null)"
+  # me2resh/apexyard#1062: under a non-bash shell BASH_SOURCE is empty, so the resolution above
+  # degrades to the CALLER's cwd (dirname "" -> "."). Discard a cwd-derived path so the anchored
+  # git-root check below must validate it; a genuine BASH_SOURCE path is where this file lives and
+  # is kept as-is (#1061 only anchored the git-derived fallback, not this cwd-derived branch).
+  if [ -z "${BASH_SOURCE[0]:-}" ]; then _lib_extract_pr_dir=""; fi
+  if [ -z "$_lib_extract_pr_dir" ] || [ ! -f "$_lib_extract_pr_dir/_lib-tracker.sh" ]; then
+    _lib_extract_pr_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+    # me2resh/apexyard#1033: only accept a git-derived root that is actually
+    # an apexyard fork. Without this the fallback sources a trust-chain
+    # library out of ANY repo the cwd happens to be inside -- a
+    # workspace/<project> clone, or an unrelated checkout.
+    #
+    # This narrows an ACCIDENT surface. It is NOT an access-control boundary:
+    # the anchors are unauthenticated presence-only files, and -f follows
+    # symlinks, so anyone able to write to the candidate root can satisfy it.
+    # What it prevents is a cwd-driven misresolution, not a hostile library.
+    # Anchor pair per AgDR-0021 §A/§E -- the same test
+    # resolve_ops_root_walk applies, evaluated against one candidate rather
+    # than a walk. (resolve_ops_root itself is unusable here: three of these
+    # sites are locating _lib-ops-root.sh, and its pin is session-scoped.)
+    if [ -n "$_lib_extract_pr_root" ] && { [ -f "$_lib_extract_pr_root/.apexyard-fork" ] || { [ -f "$_lib_extract_pr_root/onboarding.yaml" ] && [ -f "$_lib_extract_pr_root/apexyard.projects.yaml" ]; }; } && [ -f "$_lib_extract_pr_root/.claude/hooks/_lib-tracker.sh" ]; then
+      _lib_extract_pr_dir="$_lib_extract_pr_root/.claude/hooks"
+    fi
+    unset _lib_extract_pr_root
+  fi
   if [ -n "$_lib_extract_pr_dir" ] && [ -f "$_lib_extract_pr_dir/_lib-tracker.sh" ]; then
     # shellcheck source=/dev/null
     . "$_lib_extract_pr_dir/_lib-tracker.sh"
   fi
 fi
 
-# Echoes the forge kind ('gh' | 'glab') for a repo, via tracker_kind. Any
-# non-glab kind (gh / none / jira / linear / unknown / unresolved) → 'gh', so
+# Echoes the forge kind ('gh' | 'glab') for a repo, via tracker_review_kind.
+# Any non-glab kind (gh / none / jira / linear / unknown / unresolved) → 'gh', so
 # the GitHub CLI path stays the default. Used by the CLI-calling resolvers
 # (resolve_pr_head, resolve_pr_head_branch) which only have the repo, not the
 # command text.
 _forge_kind_for() {
   local repo="${1:-}" kind="gh"
-  if command -v tracker_kind >/dev/null 2>&1; then
-    kind=$(tracker_kind "$repo" 2>/dev/null || echo gh)
+  if command -v tracker_review_kind >/dev/null 2>&1; then
+    kind=$(tracker_review_kind "$repo" 2>/dev/null || echo gh)
   fi
   case "$kind" in glab) echo glab ;; *) echo gh ;; esac
 }
@@ -170,6 +210,64 @@ _extract_wrapper_arg() {
     fi
   done
   echo ""
+}
+
+# Best-effort decode of the JSON string escapes that could hide a merge
+# command's SEPARATORS from the raw-payload fallback scan (#973). Echoes
+# the normalized text.
+#
+# Handles six literal JSON escape sequences, decoded to the real character
+# they represent: backslash-t and backslash-u0009 both decode to a tab;
+# backslash-n and backslash-u000A (either case) decode to a newline;
+# backslash-u0020 decodes to a plain space; backslash-slash decodes to a
+# plain slash.
+#
+# This is deliberately NOT a full JSON string decoder — no handling of
+# arbitrary \uXXXX code points, no awareness of escaped-backslash context
+# (a literal `\\t` — escaped backslash followed by a bare `t` — will still
+# be (mis-)decoded as a tab; that's an accepted, documented limitation, not
+# a security gap: it can only make the fallback MORE eager to treat text as
+# merge-shaped, i.e. fail closed, never a new way to evade it). Pure bash
+# parameter expansion — no eval, no external process, no regex
+# backtracking on attacker-controlled text — matching the same discipline
+# as `_extract_wrapper_arg` above.
+#
+# Callers: ONLY the four merge-gate hooks' raw-payload fallback branches
+# (`is_merge_command "$(_normalize_json_escapes "$INPUT")"`), never
+# `is_merge_command` itself and never the normal jq-present path — see the
+# file header (#973) for why mixing this into the jq-present path would be
+# unsafe.
+_normalize_json_escapes() {
+  local text="$1"
+  local tab=$'\t'
+  local nl=$'\n'
+  # Two literal backslash characters. Used as the escape-matching prefix
+  # below rather than a single backslash: bash's `${var//pattern/repl}`
+  # treats a SINGLE backslash inside an expanded pattern as a glob escape
+  # character (it would consume/escape the following char instead of
+  # matching a literal backslash), so building the pattern from a
+  # single-backslash variable silently fails to consume the backslash
+  # itself — the doubled form is what makes the pattern match one literal
+  # backslash followed by the literal marker character.
+  local bs2='\\'
+
+  local esc_u0020="${bs2}u0020"
+  local esc_u0009="${bs2}u0009"
+  local esc_u000A="${bs2}u000A"
+  local esc_u000a="${bs2}u000a"
+  local esc_slash="${bs2}/"
+  local esc_t="${bs2}t"
+  local esc_n="${bs2}n"
+
+  text="${text//$esc_u0020/ }"
+  text="${text//$esc_u0009/$tab}"
+  text="${text//$esc_u000A/$nl}"
+  text="${text//$esc_u000a/$nl}"
+  text="${text//$esc_slash//}"
+  text="${text//$esc_t/$tab}"
+  text="${text//$esc_n/$nl}"
+
+  printf '%s' "$text"
 }
 
 # Returns 0 if $1 looks like a merge command this gate should fire on.
@@ -599,6 +697,70 @@ resolve_ci_status_glab() {
   esac
 }
 
+# Echoes an owner/repo EXPLICITLY named in the merge command, or empty when
+# the command carries no literal repo. This intentionally excludes ambient
+# forge/CWD fallbacks so callers can apply the precedence "explicit command
+# target > cd-target heuristic > ambient checkout" without duplicating the
+# command parser (me2resh/apexyard#1151).
+extract_explicit_repo_from_command() {
+  local cmd="$1"
+  local repo=""
+
+  # 1. --repo/-R on the merge-command span only. A flag is the clearest
+  # explicit declaration and therefore outranks any URL text elsewhere.
+  local mspan
+  mspan=$(echo "$cmd" | grep -oE '\b(gh\s+pr|glab\s+mr)\s+merge\b[^|;&]*')
+  repo=$(echo "$mspan" | sed -nE 's/.*(--repo|-R)[[:space:]]+([^[:space:]]+).*/\2/p' | head -1)
+
+  # 2. gh api path extraction.
+  if [ -z "$repo" ]; then
+    repo=$(echo "$cmd" | grep -oE 'repos/[^/[:space:]]+/[^/[:space:]]+/pulls/[0-9]+/merge' \
+      | sed -nE 's|repos/([^/]+/[^/]+)/pulls/.*|\1|p' | head -1)
+  fi
+
+  # 2b. glab api path extraction (#767).
+  if [ -z "$repo" ]; then
+    repo=$(echo "$cmd" | grep -oE 'projects/[^/[:space:]]+/merge_requests/[0-9]+/merge' \
+      | sed -nE 's|projects/([^/]+)/merge_requests/.*|\1|p' | head -1)
+    if [ -n "$repo" ]; then
+      repo=$(echo "$repo" | sed -e 's/%2[Ff]/\//g')
+    fi
+  fi
+
+  # 3. tracker_pr_merge positional repo argument (#759).
+  if [ -z "$repo" ]; then
+    local wspan wargs
+    wspan=$(echo "$cmd" | grep -oE '\btracker_pr_merge\b[^|;&)]*')
+    if [ -n "$wspan" ]; then
+      wargs=$(echo "$wspan" | sed -E 's/^tracker_pr_merge[[:space:]]+//')
+      repo=$(_extract_wrapper_arg "$wargs" 1)
+    fi
+  fi
+
+  echo "$repo"
+}
+
+# Resolves the merge target with one precedence shared by all four gates:
+# explicit command target, then a leading cd target's origin, then ambient
+# forge/CWD discovery. pr_cmd_cd_target + git_origin_repo are supplied by
+# _lib-pr-repo.sh, which each merge-gate hook sources before calling this.
+resolve_merge_repo() {
+  local cmd="$1" repo="" cd_target=""
+
+  repo=$(extract_explicit_repo_from_command "$cmd")
+  if [ -z "$repo" ] && command -v pr_cmd_cd_target >/dev/null 2>&1 && command -v git_origin_repo >/dev/null 2>&1; then
+    cd_target=$(pr_cmd_cd_target "$cmd")
+    if [ -n "$cd_target" ] && git -C "$cd_target" rev-parse --git-dir >/dev/null 2>&1; then
+      repo=$(git_origin_repo "$cd_target")
+    fi
+  fi
+  if [ -z "$repo" ]; then
+    repo=$(extract_repo_from_command "$cmd")
+  fi
+
+  echo "$repo"
+}
+
 # Echoes the owner/repo extracted from the merge command, or empty if not found.
 #
 # This is a SIBLING function to extract_pr_number — same parsing approach,
@@ -611,62 +773,44 @@ resolve_ci_status_glab() {
 #   1b. `glab api projects/<owner>%2F<repo>/merge_requests/<N>/merge ...` — repo
 #       from the URL-encoded project path (#767)
 #   2. `gh pr merge ... --repo <owner>/<repo> ...`        — repo from --repo flag
-#   3. Falls back to `gh pr view --json headRepository`   — current branch's PR
+#   3. Falls back to `gh pr view --json headRepository`, scoped to the
+#      checkout's own `origin` remote when resolvable (#887) — current
+#      branch's PR
 #
 # Returns empty if the repo cannot be determined.
 extract_repo_from_command() {
   local cmd="$1"
   local repo=""
 
-  # 1. gh api path extraction.
-  repo=$(echo "$cmd" | grep -oE 'repos/[^/[:space:]]+/[^/[:space:]]+/pulls/[0-9]+/merge' \
-    | sed -nE 's|repos/([^/]+/[^/]+)/pulls/.*|\1|p' | head -1)
-
-  # 1b. glab api path extraction (#767). GitLab's API takes the project as a
-  #     single URL-encoded path segment — `projects/<owner>%2F<repo>` (nested
-  #     subgroups become `<a>%2F<b>%2F<repo>`). There are no literal slashes in
-  #     the encoded segment, so [^/[:space:]]+ captures the whole project; then
-  #     decode %2F/%2f back to `/` so the result matches the owner/repo form the
-  #     markers and `glab mr view -R` expect.
-  if [ -z "$repo" ]; then
-    repo=$(echo "$cmd" | grep -oE 'projects/[^/[:space:]]+/merge_requests/[0-9]+/merge' \
-      | sed -nE 's|projects/([^/]+)/merge_requests/.*|\1|p' | head -1)
-    if [ -n "$repo" ]; then
-      repo=$(echo "$repo" | sed -e 's/%2[Ff]/\//g')
-    fi
-  fi
-
-  # 2. Repo flag on the merge command: gh/glab `--repo` or the short `-R` alias
-  #    (both gh and glab accept `-R`) (#764). Search ONLY within the merge-command
-  #    span (fenced at the first shell separator, like extract_pr_number) so a
-  #    trailing unrelated `-R` in a compound command — e.g. `... && grep -R foo` —
-  #    cannot be mistaken for the merge target's repo.
-  if [ -z "$repo" ]; then
-    local mspan
-    mspan=$(echo "$cmd" | grep -oE '\b(gh\s+pr|glab\s+mr)\s+merge\b[^|;&]*')
-    repo=$(echo "$mspan" | sed -nE 's/.*(--repo|-R)[[:space:]]+([^[:space:]]+).*/\2/p' | head -1)
-  fi
-
-  # 2b. tracker_pr_merge wrapper positional arg (#759): `<owner/repo>` is the
-  #     FIRST argument — `tracker_pr_merge <owner/repo> <pr> <strategy> [<del>]`.
-  #     Same fencing-at-`)` discipline as extract_pr_number's wrapper step
-  #     (the real call site is a `$(...)` command substitution).
-  if [ -z "$repo" ]; then
-    local wspan wargs
-    wspan=$(echo "$cmd" | grep -oE '\btracker_pr_merge\b[^|;&)]*')
-    if [ -n "$wspan" ]; then
-      wargs=$(echo "$wspan" | sed -E 's/^tracker_pr_merge[[:space:]]+//')
-      repo=$(_extract_wrapper_arg "$wargs" 1)
-    fi
-  fi
+  repo=$(extract_explicit_repo_from_command "$cmd")
 
   # 3. Last resort: ask the forge which repo the current branch's PR/MR belongs
   #    to. Forge-aware (#764): a glab command falls back to `glab repo view`.
+  #
+  #    gh side (#887): an UNSCOPED `gh pr view --json headRepository` trusts
+  #    gh's ambient default-repo resolution, which prefers a remote literally
+  #    named "upstream" over "origin" when both exist — exactly the fork
+  #    layout this framework's own hooks use (origin=fork, upstream=canonical).
+  #    On a same-repo fork PR (opened against the fork's own main) that
+  #    ambient default silently targets the WRONG (parent) repo instead of
+  #    failing, the same class of bug `pr_base_repo` was fixed against in
+  #    #765/#898. Resolve the checkout's OWN repo from its `origin` remote
+  #    FIRST — deterministic, not a guess — and scope the gh query to it;
+  #    only fall through to the unscoped call when origin itself can't be
+  #    resolved at all (e.g. no git remote configured), so single-remote
+  #    checkouts keep working exactly as before.
   if [ -z "$repo" ]; then
     if [ "$(_forge_from_command "$cmd")" = glab ]; then
       repo=$(glab repo view --output json 2>/dev/null | jq -r '.full_name // empty' 2>/dev/null)
     else
-      repo=$(gh pr view --json headRepository --jq '.headRepository.nameWithOwner' 2>/dev/null)
+      local origin_repo
+      origin_repo=$(git remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#^(https?://[^/]+/|git@[^:]+:)##')
+      if [ -n "$origin_repo" ]; then
+        repo=$(gh pr view --repo "$origin_repo" --json headRepository --jq '.headRepository.nameWithOwner' 2>/dev/null)
+      fi
+      if [ -z "$repo" ]; then
+        repo=$(gh pr view --json headRepository --jq '.headRepository.nameWithOwner' 2>/dev/null)
+      fi
     fi
   fi
 

@@ -13,7 +13,9 @@
       "Docs",
       "Spike",
       "Prototype",
-      "Investigation"
+      "Investigation",
+      "Migration",
+      "Idea"
     ],
     "label_priority_scheme": "P0,P1,P2,P3",
     "required_sections": {
@@ -39,7 +41,9 @@
       "setup",
       "handover",
       "update",
-      "split-portfolio"
+      "split-portfolio",
+      "onboard",
+      "tutorial"
     ],
     "_create_command_patterns_comment": "Raw ticket-create CLI shapes that require-skill-for-issue-create.sh blocks unless a structured ticket skill (/task, /feature, /bug, /spike, /migration, /investigation, /idea) is in flight (marker at .claude/session/active-issue-skill). Tracker-agnostic: extend this list in .claude/project-config.json for Linear, Jira, Asana, or custom trackers. Patterns are matched as substrings of the (whitespace-collapsed) bash command. See AgDR-0030 and me2resh/apexyard#268.",
     "create_command_patterns": [
@@ -52,6 +56,11 @@
       "asana task create",
       "tracker_create"
     ]
+  },
+
+  "merge": {
+    "_comment": "Config for /approve-merge's behind-base check (me2resh/apexyard#1386). require_up_to_date defaults to true: before merging, the skill computes whether the PR's head is behind its base from the compare API (is_pr_behind_base in _lib-merge-behind.sh), not from the forge's mergeStateStatus field, which only reports BEHIND under a strict ruleset policy. When behind, the skill stops before the merge instead of using a CI result computed against a stale base. Set to false to disable the check for adopters who accept that risk. This key changes /approve-merge's own behaviour only — it adds no new blocking condition to block-unreviewed-merge.sh.",
+    "require_up_to_date": true
   },
 
   "branch": {
@@ -68,6 +77,14 @@
       "build",
       "perf",
       "sync"
+    ],
+    "_trunk_whitelist_comment": "Trunk/shared-integration branch names validate-branch-name.sh exempts from the {type}/{TICKET}-{description} shape entirely. Includes `development` — the gitflow long form some Bitbucket/gitflow remotes use as the integration branch, missed by the original hardcoded main/master/develop/dev list. Extend in .claude/project-config.json (REPLACES this array) to add client-mandated trunk names (e.g. `trunk`, `staging`). See me2resh/apexyard#888.",
+    "trunk_whitelist": [
+      "main",
+      "master",
+      "develop",
+      "dev",
+      "development"
     ]
   },
 
@@ -131,7 +148,11 @@
   },
 
   "review_markers": {
-    "on_stale": "warn"
+    "on_stale": "warn",
+    "human_approver_title": "CEO",
+    "require_posted_review": false,
+    "_comment_require_posted_review": "me2resh/apexyard#1051 — OPT-IN. When true, block-unreviewed-merge.sh additionally requires that a code review was actually POSTED to the PR at the same commit the Rex marker names, verified via the forge API. Default false because it changes merge behaviour for every adopter and is GitHub-only today (glab/custom/none skip with a warning; see tracker_review_at_sha in _lib-tracker.sh). Turn it on when you want 'Rex reviewed this' to be verifiable server-side instead of inferred from a local file an agent can write. Deliberately WEAKER than the independent-reviewer gate AgDR-0062 deferred: it accepts a review posted by the PR's own author, so it is NOT separation of duties and must not be described as such. What it does prove is that a review exists on the forge at this commit, which a local file write cannot fabricate. See AgDR-0112.",
+    "_comment_human_approver_title": "me2resh/apexyard#957 — DISPLAY-ONLY override for the prose word used for the human per-PR merge approver in hook messages and /approve-merge output (e.g. 'Maintainer', 'Dev Lead'). Default 'CEO' is a zero-behaviour-change no-op. Marker filenames stay '-ceo.approved', and the structured fields (sha=, approved_by=user, skill_version=) are UNCHANGED regardless of this value — this key only affects printed text, never gate logic. See docs/agdr/AgDR-0103-configurable-approver-display-title.md."
   },
 
   "docs_index": {
@@ -233,5 +254,96 @@
       "review": "In review",
       "measurement": "Measurement"
     }
+  },
+
+  "skill_intent": {
+    "_comment": "Config for detect-skill-intent.sh — the skill-side sibling of detect-role-trigger.sh (me2resh/apexyard#894). Each entry maps a set of intent phrases to the skill that owns that work, plus the template it produces (empty string when the skill has no single template, e.g. /launch-check's 10-dimension sweep). Phrases are matched as literal, lowercased substrings against the (punctuation-stripped) prompt — data-driven so adopters can extend the map in .claude/project-config.json (shallow-merge REPLACES this whole array; copy entries you want to keep) without touching hook logic. Advisory only — see .claude/rules/skill-first.md.",
+    "map": [
+      {
+        "skill": "threat-model",
+        "template": "templates/audits/threat-model.md",
+        "phrases": ["threat model", "threat modeling", "threat modelling", "stride analysis"]
+      },
+      {
+        "skill": "dfd",
+        "template": "templates/architecture/dfd.md",
+        "phrases": ["data flow diagram", "make a dfd", "draw a dfd", "trust boundary diagram"]
+      },
+      {
+        "skill": "accessibility-audit",
+        "template": "templates/audits/accessibility-audit.md",
+        "phrases": ["accessibility audit", "a11y audit", "wcag audit", "wcag check"]
+      },
+      {
+        "skill": "compliance-check",
+        "template": "templates/audits/compliance-check.md",
+        "phrases": ["compliance check", "gdpr audit", "gdpr check", "eprivacy audit"]
+      },
+      {
+        "skill": "seo-audit",
+        "template": "templates/audits/seo-audit.md",
+        "phrases": ["seo audit", "seo check"]
+      },
+      {
+        "skill": "geo-audit",
+        "template": "templates/audits/geo-audit.md",
+        "phrases": ["geo audit", "aeo audit", "llms.txt audit"]
+      },
+      {
+        "skill": "performance-audit",
+        "template": "templates/audits/performance-audit.md",
+        "phrases": ["performance audit", "perf audit", "core web vitals audit"]
+      },
+      {
+        "skill": "monitoring-audit",
+        "template": "templates/audits/monitoring-audit.md",
+        "phrases": ["monitoring audit", "observability audit"]
+      },
+      {
+        "skill": "docs-audit",
+        "template": "templates/audits/docs-audit.md",
+        "phrases": ["docs audit", "documentation audit"]
+      },
+      {
+        "skill": "analytics-audit",
+        "template": "templates/audits/analytics-audit.md",
+        "phrases": ["analytics audit", "event taxonomy audit"]
+      },
+      {
+        "skill": "security-review",
+        "template": "templates/audits/security-review.md",
+        "phrases": ["security review", "security audit", "owasp review"]
+      },
+      {
+        "skill": "launch-check",
+        "template": "",
+        "phrases": ["launch check", "production readiness", "go no go review", "launch readiness audit"]
+      },
+      {
+        "skill": "write-spec",
+        "template": "templates/prd.md",
+        "phrases": ["write a spec", "write a prd", "draft a prd", "draft a spec", "write a feature spec"]
+      },
+      {
+        "skill": "bug",
+        "template": "templates/tickets/bug.md",
+        "phrases": ["file a bug", "report a bug", "file a bug ticket"]
+      },
+      {
+        "skill": "feature",
+        "template": "templates/tickets/feature.md",
+        "phrases": ["file a feature", "create a feature ticket", "file a feature ticket"]
+      },
+      {
+        "skill": "plan-initiative",
+        "template": "templates/initiative.md",
+        "phrases": ["plan this initiative", "plan the quarter", "plan this quarter", "plan our roadmap"]
+      },
+      {
+        "skill": "decide",
+        "template": "templates/agdr.md",
+        "phrases": ["decide between", "let's decide", "lets decide", "make a technical decision"]
+      }
+    ]
   }
 }

@@ -1,6 +1,523 @@
+## [v5.7.0] — 2026-09-27
+
+Minor release — 2 features, 9 fixes, 1 improvement.
+
+Behaviour change: `/approve-merge` now stops a merge when the PR is behind its base branch (#1406). The check is on by default. Set `merge.require_up_to_date` to `false` in `.claude/project-config.json` to turn it off.
+
+### Added (feat)
+
+- (#1420) make reviews faster with a severity bar, delta re-reviews and CI-first testing — 020fbab
+- (#1351) add opt-in ORBIT planning adapter — 6d8f24b
+
+### Fixed (fix)
+
+- (#1419) block a merge when a merge gate cannot load a library — cdb57f1
+- (#1406) stop a merge when the PR is behind its base, and make /release-sync keep main-only changes — c16860e
+- (#1404) honor the active ticket for unparsed write targets, and document a reviewer test path — 9d46ee2
+- (#1400) scope the active-reviewer marker per session and stop owner-name leak false blocks — 5c12554
+- (#1397) cover .astro in the design gate, exempt Alembic env.py, and warn when config overrides drop defaults — d60a0d4
+- (#1399) validate Mermaid in every diagram-producing skill and align the DFD template with threat-model — 5be9ecb
+- (#1355) stop Claude Code always-loading rule bodies — 6870a8b
+- (#1373) skip CodeQL analysis outside the upstream repository — c66d7c5
+- (#1353) pass Orbit record root to validation — 7e561ec
+
+### Changed (refactor / chore / docs)
+
+- (#1398) load the writing rule in every agent, add a no-search-MCP fallback, and make Rex verify acceptance criteria — 2b6ed42
+
+### Closes
+
+- Closes #1350
+- Closes #1354
+- Closes #1370
+- Closes #1376
+- Closes #1385
+- Closes #1386
+- Closes #1390
+- Closes #1396
+
+## [v5.6.3] — 2026-09-18
+
+Patch release — 15 fixes, 7 improvements.
+
+v5.6.2 had no Released-From trailer. `/release-sync` for that tag landed at the tip of `dev`, so the default changelog range was empty (#872). This section lists first-parent commits after `08e694b` that were not in v5.6.0–v5.6.2.
+
+### Fixed (fix)
+
+- (#1344) rank git -C commit path above payload cwd — 0c5cf1c
+- (#1339) run merge gates on wrapped merge helper — b768d22
+- (#1337) keep adapter hook tests green without yq — cd26bbc
+- (#1334) pass tracker CLI stderr through remaining adapters — 45506d3
+- (#1316) harden split-portfolio adapter trust — 8b7c02b
+- (#1329) surface tracker CLI errors from tracker_create — 8e0e60a
+- (#1326) restore /update chain across v5.6.0–v5.6.2 — 8883d61
+- (#1314) anchor split-portfolio adapter resolution — 9da26a4
+- (#1310) make AgDR identifiers unique — cca0198
+- (#1309) batch markdownlint pre-push paths on Windows — e9c95e0
+- (#1308) preserve update sync ancestry — df688bc
+- (#1307) classify delegated gate scripts as trust-chain — 160a5c7
+- (#1306) reject hookless split-portfolio session pins — 4f7af44
+- (#1305) prefer v2 fork anchor in nested child scan — bf43d48
+- (#1295) continue after adapter prerequisite drift — 3e4c234
+
+### Changed (refactor / chore / docs)
+
+- (#1333) add ahmedashraffcih to the code contributors row — 3250e2e
+- (#1331) lock SessionStart dispatcher lists and failure paths — d1eea7c
+- (#1330) validate Rex review body before the marker write — c217498
+- (#1324) load rule bodies on demand — 51055e5
+- (#1321) collapse SessionStart hook fan-out — 3953d50
+- (#1320) dispatch Bash PreToolUse hooks once — fdbe2f2
+- (#1312) native-first Cursor overlay — 8e12865
+
+### Closes
+
+- Closes #1294
+- Closes #1298
+- Closes #1301
+- Closes #1304
+- Closes #1311
+- Closes #1313
+- Closes #1315
+- Closes #1317
+- Closes #1318
+- Closes #1319
+- Closes #1322
+- Closes #1323
+- Closes #1338
+
+## [v5.6.2] — 2026-09-14
+
+Patch release — 1 fix.
+
+### Fixed (fix)
+
+- (#1292) handle repo-less adapter registry entries — 08e694b
+
+### Closes
+
+- Closes #1292
+
+## [v5.6.1] — 2026-09-14
+
+Minor release — 2 features, 1 improvement.
+
+### Added (feat)
+
+- (#1289) make harness adapters framework defaults — e466542
+- (#1288) install and audit portfolio harness adapters — bd78903
+
+### Changed (refactor / chore / docs)
+
+- (#1287) record portfolio harness adapter decision — d5ad998
+
+### Closes
+
+- Closes #1286
+
+## [v5.6.0] — 2026-09-14
+
+Minor release — 1 feature, 1 improvement.
+
+### Added (feat)
+
+- (#1288) install and audit portfolio harness adapters — bd78903
+
+### Changed (refactor / chore / docs)
+
+- (#1287) record portfolio harness adapter decision — d5ad998
+
+### Closes
+
+- Closes #1286
+
+## [v5.5.2] — 2026-09-13
+
+Patch release — 6 fixes, 2 improvements.
+
+### Fixed (fix)
+
+- (#1281) support large PR file lists in merge gates — 4965d40
+- (#1277) require explicit tracker repo across projects — 831e9fa
+- (#1279) restore structured Rex review reports — dc3883a
+- (#1276) find nested ops fork under enclosing repo — 6b98e58
+- (#1275) allow orchestrator review worktree setup — 2cdf62f
+- (#1274) resolve review scanner from ops pin — d665f73
+
+### Changed (refactor / chore / docs)
+
+- (#1282) isolate search config fixtures — d5e88cb
+- sync dev after v5.5.1 release — 98a4f58
+
+### Closes
+
+- Closes #1261
+- Closes #1268
+- Closes #1270
+- Closes #1271
+- Closes #1272
+
+## [v5.5.1] — 2026-09-11
+
+Patch release — 1 improvement.
+
+### Changed (refactor / chore / docs)
+
+- (#1260) credit issue contributors across repository history — 3c50de0
+
+### Closes
+
+- Closes #1259
+
+## [v5.5.0] — 2026-09-10
+
+Minor release — 8 features, 48 fixes, 21 improvements.
+
+### Added (feat)
+
+- (#1239) split issue and review tracker hosts — 1796a60
+- enforce controlled technical writing for new artifacts — f468a0e
+- (#1191) require browser evidence in QA and design-review records — 5408ddd
+- (#1179) add build-time handbook discovery — 012d586
+- (#1170) add cross-harness quality regression — ba05168
+- (#1168) add writing standard with Strict and Flavored modes — 97e8479
+- (#1167) extend right-size tiers to planning, implementation, and artifacts — 11e7e14
+- (#1166) add universal evidence-grounding contract — 5327d74
+
+### Fixed (fix)
+
+- (#1257) block agent privilege escalation — 8be2866
+- (#1255) ground reviewer behavior claims in real usage — afb20eb
+- recognize security approval safeguards — 205a967
+- avoid false quality-regression failures — ff08420
+- recognize likely and unconfirmed findings — e34fb5a
+- recognize qualified uncertainty in regression checks — 6e52f45
+- classify harness startup failures as not run — 0881cf8
+- (#1248) make regression fixtures actionable — 8b441dc
+- (#1238) keep review agents read-only — 8a1ec98
+- (#1234) prevent doubled leading slash in path resolver — 951715f
+- (#1232) scope protected-branch backstop to target repo — 0c3e610
+- (#1227) accept v-prefixed changelog headings — fcfccc5
+- (#1224) require browser evidence for Head of Design — 98b378d
+- (#1223) keep release PR variables in one shell block — aa96a5a
+- (#1222) restore fixture heading — 10ba602
+- (#1221) require Rex to verify cited criteria — b5bf397
+- (#1220) scan staged private references — 16450aa
+- (#1219) block heredoc compound commands — 31317de
+- complete AgDR renumbering audit — 6605342
+- reserve AgDR identifiers across branches — ccfad7a
+- coordinate AgDR allocation across worktrees — 453a98c
+- guard AgDR identifier allocation — 57d9796
+- normalize pinned worktree roots — 98cc377
+- normalize linked worktree ops roots — 648a5c7
+- report skipped suites as failures — 9a65a41
+- fail when hook suites skip cases — 15e6414
+- surface skipped hook tests — 943b430
+- fail closed on unresolved PR base — db1c1a2
+- document wrapper scan limits — 9c54059
+- block compound shell substitutions — ba12f90
+- reject nested commit commands — 51e3701
+- cover the wrapper shapes and fix two review-attribution bugs — 2e8b787
+- reject newline compound commit commands — e3cc705
+- reject compound commit commands — 98bc8ef
+- parse first commit message argument — b9b52f3
+- scan gh pr review and gh pr merge for leaked private references — 2d72f33
+- (#1198) compose _resolve_real_path after lexical collapse in migration gate — 7359a5d
+- (#1192) preserve Released-From trailer on release-PR squash — 4bbacfd
+- (#1190) correct same-account review verdict guidance — a300c98
+- (#1180) refuse unresolvable migration write targets instead of falling back — 65a304b
+- (#1156) preserve workspace README in split setup — 62b65f7
+- (#1155) resolve merge repo before cd heuristic — a4878dd
+- (#1173) make the merge gate satisfiable through the sanctioned path — da0ce0a
+- (#1177) close command validation parse bypasses — 0bd7ee5
+- (#1176) fail closed on unreadable hook payloads — 47ca52a
+- (#1172) right-size handbook review triggers — 2efcf30
+- (#1157) detect review markers written to a gate-invisible path — 89209c9
+- (#1154) scope Wave 1 skills to tracked files — 6a0f5f1
+
+### Changed (refactor / chore / docs)
+
+- (#1247) clarify quality and adapter guides — fabef4a
+- (#1246) clarify hook comments — 7c14a3d
+- (#1245) clarify portfolio operations — bc1b0e8
+- (#1244) clarify release and harness guides — af69862
+- (#1243) clarify single-fork setup — 4eac600
+- (#1242) clarify onboarding language — 0e3a11c
+- (#1241) clarify workflow guides — ec197aa
+- (#1240) clarify framework prose — ace2247
+- (#1237) close multi-repo design residuals — b300ed6
+- (#1236) dismiss stale forge approvals — aa5b9a6
+- (#1235) describe jq config merge semantics accurately — fa46f8d
+- (#1231) share active-ticket marker resolver — 56aacc0
+- resolve adapter dependency advisories — f86c050
+- update AgDR inbound reference — 1b885f0
+- cover write detector false positives — ed3f45e
+- audit portfolio root worktree behavior — 81e7f43
+- quarantine documented environment skips — 471f575
+- Merge remote-tracking branch 'upstream/dev' into fix/GH-1206-leak-protection-gaps — 6fe94d2
+- (#1205) technical design for portfolio multi-repo aggregation — 6dc663a
+- (#1175) apply writing standard across artefacts — 1171f75
+- (#1148) point live site references to apexyard.ai — 173c07c
+
+### Closes
+
+- Closes #1136
+- Closes #1138
+- Closes #1146
+- Closes #1147
+- Closes #1148
+- Closes #1151
+- Closes #1152
+- Closes #1159
+- Closes #1161
+- Closes #1163
+- Closes #1164
+- Closes #1165
+- Closes #1171
+- Closes #1174
+- Closes #1181
+- Closes #1182
+- Closes #1187
+- Closes #1196
+- Closes #1197
+- Closes #1202
+- Closes #1207
+- Closes #1209
+- Closes #1218
+- Closes #1225
+- Closes #1230
+- Closes #1233
+- Closes #1255
+- Closes #1257
+
 # Changelog
 
 All notable changes to ApexYard are documented here.
+
+## [v5.4.0] — 2026-08-02
+
+Minor release — 3 features, 25 fixes, 15 improvements.
+
+### Added (feat)
+
+- (#1129) first-class multi-repo project (leak-scrub covers every repo slug) — c7f65d8
+- (#1120) migrate block-main-push onto the shared lib, add --no-verify block, relabel as blocking backstop — 8af2391
+- (#1117) add blocking pre-commit protected-branch gate + fail-closed lib hardening (AgDR-0114) — c9569f4
+
+### Fixed (fix)
+
+- (#1125) centralize trust-chain lib self-location behind one anchored helper — a345010
+- (#1122) dispatch the red-CI check on tracker_kind so glab-registered projects check glab, not gh — 515bf38
+- (#1114) make portfolio path comparison case-insensitive-filesystem aware — ddf82c9
+- (#1113) pin #1087 fail-closed behaviour and correct the installer doc — 098c776
+- (#1112) fail closed on unreadable gh api body-file and unparseable --input — 0b44bac
+- (#1107) stop /dfd discovery from walking into workspace and worktrees — 663ae55
+- (#1111) anchor the pre-push skip marker to a whole line — d57df89
+- (#1110) emit release-changelog Closes only from a recognised conventional-commit scope — 15c6e13
+- (#1109) backfill walkable migration-chain placeholders and add the release-time migration check — 0435c36
+- (#1100) anchor the cwd-derived branch of trust-chain self-location (#1062) — 6d7d3f9
+- (#1101) unlock /decide and /audit-deps, and assert over every locked skill — ac9053b
+- (#1098) block instead of falling back to local HEAD when the forge is unreachable — 1712f79
+- (#1096) lint tracked markdown in the pre-push gate, not the whole disk — 59c3cc6
+- (#1090) enforce protected branches from git's pre-push ref list — 6762610
+- (#1075) strip heredoc bodies before git-command pattern matching — 32a84a3
+- (#1080) make leak-hook target-repo resolution class-based, not positional — d4fa95e
+- (#1082) derive release-changelog's PR lookup repo from the actual remote — acb3a01
+- (#1073) resolve verify-commit-refs.sh's tracker repo from the commit's own directory — 83249c2
+- (#1074) resolve issue refs before making Closes actually auto-close — cd64c00
+- (#1072) stage-then-promote audit_run_persist so a jq failure leaves no file — 8c7e890
+- (#1067) close the leak-hook trim fail-open and correct its bypass advice — 4cfd7a9
+- (#1065) untrack project-config.json and ship a tracked example template — 8822d05
+- (#1061) anchor the git-derived self-location fallback to an apexyard fork — 6699cc3
+- (#1060) stop reporting sections missing from a body file that was not read — 1eef1e0
+- (#1059) treat absolute drive-letter paths as absolute in _portfolio_resolve — cd7f6e6
+
+### Changed (refactor / chore / docs)
+
+- (#1132) ship the v5.3.0→v5.4.0 migration (untrack project-config.json) — d06cc1d
+- (#1130) route remaining hook self-location through resolve_anchored_lib_dir() — ee8aa6c
+- (#1127) memoise session-scoped ops-root + config resolution across hooks — 4cfc58a
+- (#1124) record AgDR-0119 (framework self-audit destination); defer Option A — 6e5510c
+- (#1119) make the Lean tier reachable (accept+document, reduced-scope Rex) [AgDR-0116] — 8aae369
+- (#1118) advisory nudge for trust-chain CONTROL adversarial-test coverage (AgDR-0117) — 1475171
+- (#1116) record AgDR-0115 (accept residual, forge-native check) + fix installer header — cb22bbd
+- (#1115) publish the framework control-plane DFD and threat model — 0d40dc8
+- (#1035) bump the codeql-action group with 3 updates — 7d93615
+- (#1036) bump actions/checkout from 7.0.0 to 7.0.1 — 63dcc4e
+- (#1037) bump ossf/scorecard-action from 2.4.3 to 2.4.4 — 0fef132
+- (#1103) credit aniketshukla1 in the contributors list — 6d5ba88
+- (#1108) pin fail-closed behaviour of the architecture + design merge gates — e2cf6d0
+- (#1106) give isolated-builds worktrees a location, naming, and lifecycle convention — 6d2c6b1
+- (#1087) install git pre-push hooks by default — 0e68a49
+
+### Closes
+
+- Closes #1013
+- Closes #1024
+- Closes #1031
+- Closes #1033
+- Closes #1046
+- Closes #1050
+- Closes #1056
+- Closes #1057
+- Closes #1058
+- Closes #1064
+- Closes #1066
+- Closes #1068
+- Closes #1070
+- Closes #1076
+- Closes #1077
+- Closes #1086
+- Closes #1088
+- Closes #1089
+- Closes #1092
+- Closes #1093
+- Closes #1094
+- Closes #1095
+- Closes #1097
+- Closes #1099
+- Closes #1102
+- Closes #1104
+- Closes #1105
+- Closes #1121
+- Closes #1123
+- Closes #1126
+- Closes #1131
+
+## [v5.3.0] — 2026-07-29
+
+Minor release — 1 feature, 12 fixes, 4 improvements.
+
+### Added (feat)
+
+- (#1051) opt-in merge gate on a review actually posted at HEAD — b41dc12
+
+### Fixed (fix)
+
+- (#1026) the marker-write gate is a backstop — make it advisory — 9130cdb
+- (#1042) put the human gate on approval, not on review — 3b28b93
+- (#1038) PR-create hooks mis-parse a quoted --body-file path — 64e996c
+- (#1039) leak-protection hook fails closed on an unreadable body-file — f625d84
+- (#1029) normalize Windows drive-letter paths in portfolio path canonicalizer — 2554869
+- (#1025) make tracker/onboarding lib self-location zsh-safe, fail loudly — 4c24c2e
+- (#1019) strip trailing CR from config_get so Windows multi-line reads work — ad8daa4
+- (#1030) isolate test_sync_codex_adapter.sh from the ambient session-pin — c9297aa
+- (#1017) count-guard warning text + fail-open range parse (#1017) — b468e76
+- (#1000) narrow warn-review-marker-write.sh to actual write intent — c5ee25c
+- (#1012) release count-mismatch guard + Released-From trailer under squash releases — 3163b37
+- (#1008) set exec bit on reindex-on-session-start.sh — a60d612
+
+### Changed (refactor / chore / docs)
+
+- (#1045) right-size-ceremony cited a premium-only hook as its OSS watchdog — f34e3eb
+- (#1015) AgDR-0109 — marker-write gate is a backstop; activate AgDR-0104 deferred meta-gate — ee56e06
+- (#999) align .claude/hooks AgDR wording with materiality threshold (#999) — 5b60803
+- (#1007) fix stale hook count in CLAUDE.md (47 -> 49) — b8be74b
+
+### Closes
+
+- Closes #999, #1000, #1005, #1007, #1008, #1012, #1015, #1017, #1019, #1025, #1026, #1029, #1030, #1038, #1039, #1042, #1045, #1051
+
+## [v5.2.0] — 2026-07-24
+
+Minor release — 2 features, 13 fixes, 14 improvements.
+
+The headline is the framework's own over-process problem. A real user reported *"very slow, tons of overengineering, very bureaucratic … infinite loops of AgDRs then backend then devops and zero progress."* Three changes close that loop: **right-size-ceremony** (#993) adds a Lean floor so trivial changes stop drawing the full review chain; **role-trigger convergence** (#995) makes role banners fire once per session with a "finish the current unit" guard instead of re-firing a handover on every edit; and the **AgDR materiality threshold** (#997, AgDR-0108) records decisions that are architectural, hard to reverse, or cross-cutting rather than every implementation choice. The rest is trust-chain and merge-gate hardening, the role-spec wiring cluster, and portfolio/tracker fixes.
+
+### Added (feat)
+
+- (#993) right-size-ceremony rule — an overengineering guard for the SDLC gates — 4ee6938
+- (#963) configurable human merge-approver display title — c609c15
+
+### Fixed (fix)
+
+- (#995) role-trigger banners fire once/session + converge, not per-edit — fcaada9
+- (#992) fail closed on unresolved target PR in warn-review-marker-write indirect path — cfcba2f
+- (#973) normalise JSON escapes in merge-gate raw-payload fallback — cb59b94
+- (#974) reject empty-kind active-reviewer marker in warn-review-marker-write.sh — a871b22
+- (#970) gate review-marker writes on the resolved target, not a literal path — 36ed793
+- (#965) merge-gate hooks fail closed when jq/tool-input is unevaluable — df741c5
+- (#964) resync prefix-whitelist fallback + task skill to shipped defaults — 8ad3743
+- (#958) whitelist [Migration] and [Idea] ticket prefixes — 0bea756
+- (#950) warn when portfolio/config libs are sourced under zsh — 740e9b3
+- (#955) parse GitLab /-/work_items/N issue URLs in tracker_create — 564f316
+- (#951) portfolio_validate flags projects_dir/workspace_dir resolving inside the fork — 0773938
+- (#943) reconcile installed Codex adapters on /update (carry-forward of #944) — e02cdf0
+- (#953) canonicalize resolved portfolio paths so ticket-gate prefix match works — 5380c4b
+
+### Changed (refactor / chore / docs)
+
+- (#997) narrow AgDR rule from "any technical decision" to material ones — dc26b8c
+- (#981) security role specs — trust-chain trigger, RoE step, OWASP 2025 — b6e9aeb
+- (#984) resolve sign-off authority + escalation chains in shared docs (AgDR-0106) — d15ad1b
+- (#983) retire superseded lifecycle agents — 531d0d4
+- (#982) wire data role specs to migration gate + analytics machinery — b6e01ba
+- (#978) wire engineering role specs to framework machinery + 2026 baselines — 21c0775
+- (#980) wire design role specs to gates/journey + WCAG 2.2 — d32dfef
+- (#979) wire product role specs to skill chain + analyst web tools — d8640f4
+- (#971) audience-first README rewrite — 635e06b
+- (#966) AgDR-0104 — trust-chain controls vs backstops, honestly named — df7a397
+- (#949) bump actions/setup-node from 6.0.0 to 7.0.0 — 0950a33
+- (#948) bump actions/upload-artifact from 4.6.2 to 7.0.1 — 3bf8c27
+- (#947) bump DavidAnson/markdownlint-cli2-action from 24.0.0 to 24.1.0 — b1ab5f9
+- (#946) bump the codeql-action group with 3 updates — 7d10e40
+
+### Closes
+
+- Closes #943, #946, #947, #948, #949, #950, #951, #953, #955, #958, #963, #964, #965, #966, #970, #971, #973, #974, #978, #979, #980, #981, #982, #983, #984, #992, #993, #995, #997
+
+## [v5.1.0] — 2026-07-16
+
+Minor release — 16 features, 11 fixes, 9 improvements.
+
+### Added (feat)
+
+- (#915) on-demand glossary lookup rule + full /tutorial glossary — 08428dd
+- (#913) onboarding JIT glossary asides — guided-mode teach-in-context (#913) — 2bd7c1b
+- (#933) SessionStart search advisory probes MCP reachability — 77d99de
+- (#934) onboarding depth adaptivity — terse vs guided + override + transparency — fa4bf37
+- (#928) Phase-0 cognitive memory scaffold (.claude/memory/) — 0f04092
+- (#925) /inbox stale-ticket reconcile flag — surface open issues with a merged PR — cb78bed
+- (#920) standalone /tutorial re-entry point (tour-only) — 961257e
+- (#910) increment-1 walking-skeleton first-run onboarding flow — 50814c8
+- (#894) advisory intent → skill routing hook + skill-first rule — 1847f79
+- (#895) wire the session-start reindex hook into settings.json — 33b4915
+- (#904) SessionStart split-portfolio v2 primer banner — 5d0834a
+- (#871) conformance CI — credentialed multi-runtime gate matrix + live badge — 6d86b58
+- (#893) premium-hook safe-fallback harness — _lib-premium-hook.sh — 7809376
+- (#892) SessionStart validation for apexyard-search MCP config — 4352a5f
+- (#710) add tracker_list + cross-tracker query translation — 4a1487d
+- (#761) widen tracker_view body support to jira/linear/asana — 85bd0f1
+
+### Fixed (fix)
+
+- (#932) close <> read-write + >(…) process-sub residuals in bash write-detection — 7e08e47
+- (#886) judge all bash write targets, not just the first — 5c6b1aa
+- (#887) scope the remaining unscoped gh pr view calls in the review-posting path (#887) — 25f6678
+- (#908) gate scorecard.yml to the canonical repo — 4e60d5e
+- (#906) globToRegExp missing dotall flag — multi-line commits fail-open on gate adapters — 0dba073
+- (#898) scope pr_base_repo to an explicit repo (no ambient gh resolution) — 8f1d68a
+- (#897) exempt 'development' + config-driven trunk whitelist in validate-branch-name — 527015c
+- (#883) exempt out-of-repo writes from the ticket-first gate — b6f7f56
+- (#882) resolve /start-ticket's ops root correctly on split-portfolio v2 — fddc9ea
+- (#872) resolve the changelog range from a Released-From trailer — 9150d63
+- (#875) trim marker-set recipe from warn-review-marker-write.sh BLOCKED banner — 602fc25
+
+### Changed (refactor / chore / docs)
+
+- (#912) increment-2 technical design — onboarding education layer — fe738e0
+- (#924) add reconcile-before-build self-discipline rule — a3e57b9
+- (#921) conformance dispatch-streak guard + Codex model pin — 6b48e77
+- (#909) increment-1 technical design — guided first-run onboarding — 626dcad
+- (#902) PRD — guided onboarding + teach-in-context — e61a20e
+- (#901) managed-project release versioning convention — e402955
+- (#889) fold no-attribution advisory into commit-message-quality handbook — 0b13047
+- (#877) AgDR-0094 — record release provenance via Released-From trailer — 12c9fb9
+- (#874) trim verbose squash-merge note in README contributors section — 9b2b814
+
+### Closes
+
+- Closes #710, #761, #871, #872, #874, #875, #877, #882, #883, #886, #887, #889, #892, #893, #894, #895, #897, #898, #901, #902, #904, #906, #908, #909, #910, #912, #913, #915, #920, #921, #924, #925, #928, #932, #933, #934
 
 ## [v5.0.0] — 2026-07-10
 

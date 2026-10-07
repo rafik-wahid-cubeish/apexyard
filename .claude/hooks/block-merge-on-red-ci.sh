@@ -1,4 +1,10 @@
 #!/bin/bash
+# CLASS: CONTROL (AgDR-0104 labelling, AgDR-0109). This hook decides on
+# STRUCTURED STATE, not on the text of a command: the CI conclusion the forge reports for the PR's HEAD.
+# That is what makes it trustworthy where a text-matching backstop like
+# warn-review-marker-write.sh is not. Keep it fail-closed: if it cannot
+# evaluate its precondition it must block, never allow (AgDR-0104).
+#
 # PreToolUse hook on `gh pr merge` / `gh api .../pulls/<N>/merge` AND their
 # GitLab counterparts `glab mr merge` / `glab api .../merge_requests/<N>/merge`:
 # blocks the merge if CI is failing, pending, or unresolvable.
@@ -32,6 +38,25 @@
 # Pending checks (IN_PROGRESS | QUEUED): BLOCKED. The rule says all checks
 # must be green; pending is not green. Wait for CI to finish, then retry.
 #
+# WRAPPER-SHAPE FORGE FALLBACK (#1121)
+# -------------------------------------
+# The `tracker_pr_merge` wrapper (#759) resolves its forge from the registry
+# via `_forge_kind_for` -> `tracker_kind` -> `_lib-tracker.sh`'s
+# `_tracker_project_value`, which reads the per-project `tracker.kind`
+# override with `yq` (preferred) or a `python3` + PyYAML fallback. When
+# NEITHER tool is installed, that read silently returns nothing and
+# `tracker_kind` falls through to the GLOBAL `.tracker.kind` default (`gh`)
+# — exactly wrong for a glab-registered project's wrapper call, since the
+# wrapper's own text never says which CLI it drives. `_registry_glab_fallback`
+# below is a dependency-free (grep/awk only, no yq/PyYAML) second check used
+# ONLY when the primary resolver answers "gh" for a wrapper-shape command: it
+# scans the registry file directly for an explicit `tracker: kind: glab` on
+# the target repo. It can only ever upgrade an ambiguous "gh" to a confirmed
+# "glab" — it never downgrades a "glab" answer and never fires for the
+# non-wrapper shapes (those dispatch on command text, which is always
+# trustworthy). The real fix for the underlying yq/PyYAML-optional gap
+# belongs to the shared resolver libs, out of scope here.
+#
 # GLAB PATH (new, #790)
 # ----------------------
 # `resolve_ci_status_glab` (see _lib-extract-pr.sh) resolves the GitLab MR's
@@ -45,16 +70,213 @@
 #   treated as green, exactly like a red-or-unfetchable gh CI check.
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 
-if [ -z "$COMMAND" ]; then
-  exit 0
-fi
+# _require_lib <path>: source a REQUIRED library or fail closed.
+#
+# Without this guard, a missing/unreadable library leaves is_merge_command
+# (and the other functions the library defines) undefined. In default
+# (non-POSIX) bash, sourcing a missing file with a bare `.` returns 1 and
+# the script keeps running — the later `if ! is_merge_command "$COMMAND";
+# then exit 0; fi` check then calls an undefined function, bash reports
+# "command not found" (exit 127), the negated check reads that as "not a
+# merge command", and the hook exits 0. That exit is a clean, deliberate-
+# looking 0, not a crash, so the dispatcher's fail-closed wrapper
+# (AgDR-0169) cannot see it — this gate silently opens. See
+# me2resh/apexyard#1405 review finding H2 and AgDR-0169.
+#
+# Checking readability with `[ -r ]` BEFORE ever calling `.` also matters
+# under `bash --posix` / `POSIXLY_CORRECT=1`: a special builtin such as `.`
+# that fails to find its argument ends a non-interactive POSIX-mode shell
+# immediately, even inside an `if`/`||` guard around the `.` call itself —
+# verified empirically (see AgDR-0169). `[ -r ]` is an ordinary test
+# builtin, so it never triggers that behavior; this function never calls
+# `.` on a path it has not already confirmed is readable.
+#
+# This gate does not source _lib-review-markers.sh — it decides on CI
+# status, not on approval markers — so only _lib-extract-pr.sh is guarded
+# here.
+_require_lib() {
+  local lib="$1"
+  if [ ! -r "$lib" ]; then
+    echo "BLOCKED: merge gate cannot load a required library." >&2
+    echo "Missing or unreadable: $lib" >&2
+    echo "A merge gate that cannot load its own logic fails closed" >&2
+    echo "instead of skipping the check. Restore the file and retry." >&2
+    exit 2
+  fi
+  # shellcheck disable=SC1090,SC1091
+  if ! . "$lib"; then
+    echo "BLOCKED: merge gate failed to load a required library." >&2
+    echo "Source failed: $lib" >&2
+    echo "A merge gate that cannot load its own logic fails closed" >&2
+    echo "instead of skipping the check. Fix the file and retry." >&2
+    exit 2
+  fi
+}
 
 # Shared merge-shape detector + PR-number parser (see _lib-extract-pr.sh).
 # Handles `gh pr merge <N>`, `gh api repos/<owner>/<repo>/pulls/<N>/merge`,
 # `glab mr merge <N>`, and `glab api .../merge_requests/<N>/merge` (#764/#767).
-. "$(dirname "$0")/_lib-extract-pr.sh"
+# Sourced BEFORE the jq-based command parse below (moved up from its
+# original position after the parse) so is_merge_command is available as
+# the jq-independent fallback detector when the parse can't be trusted —
+# see #965.
+_require_lib "$(dirname "$0")/_lib-extract-pr.sh"
+# Leading cd-target recovery for shared merge-repo resolution (#687/#1151).
+# Optional only for standalone hook-test sandboxes that copy a minimal lib set.
+if [ -f "$(dirname "$0")/_lib-pr-repo.sh" ]; then
+  . "$(dirname "$0")/_lib-pr-repo.sh"
+fi
+
+# _registry_glab_fallback <owner/repo>
+# -------------------------------------
+# Dependency-free (grep/awk only — no yq, no python3/PyYAML) second check for
+# whether the registry EXPLICITLY marks <owner/repo> as `tracker: kind: glab`
+# (#1121 — see the WRAPPER-SHAPE FORGE FALLBACK header comment above for why
+# this exists). Hook-local by design: it duplicates a narrow slice of
+# `_lib-tracker.sh`'s `_tracker_project_value` on purpose, rather than
+# touching that shared resolver, so this fix stays scoped to this one hook.
+#
+# Scans project blocks the same way apexyard.projects.yaml is documented to
+# be shaped (apexyard.projects.yaml.example): a top-level `projects:` list
+# where each entry is a `- name: ...` block containing a `repo:` field and,
+# optionally, a `tracker:` sub-block with a `kind:` field. A block boundary
+# is any `- ` list-item line at the SAME indentation as the first one seen —
+# this is what keeps a NESTED list (`roles:`, `tags:`) from being mistaken
+# for a new project entry, since nested items are always more indented than
+# the top-level `- name:` marker.
+#
+# Echoes "glab" and exits 0 only when the target repo's block contains an
+# explicit `kind: glab`; otherwise echoes nothing and exits 1. This can only
+# ever confirm "glab" — it never asserts "gh" — so a caller should treat a
+# miss as "no additional information", not as "confirmed gh".
+_registry_glab_fallback() {
+  local repo="${1:-}" registry=""
+  [ -n "$repo" ] || return 1
+
+  if command -v portfolio_registry >/dev/null 2>&1; then
+    registry=$(portfolio_registry 2>/dev/null)
+  fi
+  [ -n "$registry" ] || registry="./apexyard.projects.yaml"
+  [ -f "$registry" ] || return 1
+
+  local found
+  found=$(awk -v target="$repo" '
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function unquote(s,    t, n, c1, cn, sq) {
+      sq = sprintf("%c", 39)
+      t = s
+      sub(/[ \t]*#.*$/, "", t)
+      t = trim(t)
+      n = length(t)
+      if (n >= 2) {
+        c1 = substr(t, 1, 1)
+        cn = substr(t, n, 1)
+        if ((c1 == "\"" && cn == "\"") || (c1 == sq && cn == sq)) {
+          t = substr(t, 2, n - 2)
+        }
+      }
+      return t
+    }
+    BEGIN { item_indent = -1; emitted = 0 }
+    {
+      raw = $0
+      match(raw, /^[ \t]*/)
+      ind = RLENGTH
+      is_item = (raw ~ /^[ \t]*-[ \t]/)
+
+      if (is_item) {
+        if (item_indent == -1) { item_indent = ind }
+        if (ind == item_indent) {
+          # Flush the block that just ended. When the target glab block is NOT
+          # the last registry entry, the match fires here (mid-stream). We must
+          # exit WITHOUT letting the END block re-print: awk exit jumps to END,
+          # so a bare "print glab; exit" re-satisfies the END condition (block_repo
+          # and block_kind are still set) and emits a SECOND glab line, making the
+          # caller compare found against "glab\nglab" and MISS. The emitted flag
+          # makes END a no-op after a mid-stream hit (the #1121 position fix).
+          # NOTE: no apostrophes in these comments — the whole awk program is a
+          # single-quoted shell string, so an apostrophe would terminate it.
+          if (block_repo == target && block_kind == "glab") { print "glab"; emitted = 1; exit }
+          block_repo = ""; block_kind = ""
+        }
+      }
+
+      line = raw
+      sub(/^[ \t]*-[ \t]*/, "", line)
+      line = trim(line)
+      if (line ~ /^repo:[ \t]*/) {
+        v = line; sub(/^repo:[ \t]*/, "", v); block_repo = unquote(v)
+      }
+      if (line ~ /^kind:[ \t]*/) {
+        v = line; sub(/^kind:[ \t]*/, "", v); block_kind = unquote(v)
+      }
+    }
+    END {
+      # Only fires for the LAST block (no later item boundary flushed it). The
+      # `!emitted` guard prevents a double-print after a mid-stream hit above.
+      if (!emitted && block_repo == target && block_kind == "glab") print "glab"
+    }
+  ' "$registry" 2>/dev/null)
+
+  if [ "$found" = "glab" ]; then
+    echo "glab"
+    return 0
+  fi
+  return 1
+}
+
+# Parse .tool_input.command via jq. #965: this used to be the ONLY parse
+# path, and an empty/failed result — jq missing from PATH, or jq erroring
+# on unexpected input — fell straight through to `exit 0`, silently
+# ALLOWING the merge command through with NO CI-status check at all. A
+# security/quality gate must fail CLOSED when it can't evaluate its own
+# precondition, not fail open.
+#
+# But this hook's PreToolUse matcher is `Bash` (every Bash call this
+# session runs, not just merges — see .claude/settings.json), so the fix
+# can't be "exit 2 whenever jq is unavailable": that would block every
+# unrelated Bash command for the rest of the session the moment jq broke,
+# which is worse than the bug it replaces. The resolution below keeps the
+# jq-unparseable case a no-op EXCEPT when the raw payload text itself
+# looks merge-shaped — in that narrower case we cannot safely let the
+# command through, so we fail closed instead.
+COMMAND=""
+if command -v jq >/dev/null 2>&1; then
+  COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
+fi
+
+if [ -z "$COMMAND" ]; then
+  # jq is missing, OR jq is present but the parse produced nothing — a
+  # genuinely empty command (legitimate no-op) or jq choking on
+  # malformed/unexpected JSON. Those two cases are indistinguishable from
+  # a parsed field alone, so fall back to a parser-independent scan: reuse
+  # is_merge_command (plain grep/sed, no jq dependency) directly against
+  # the RAW JSON payload text instead of the parsed command. The command
+  # text's own words (`gh`, `pr`, `merge`, digits, spaces) survive JSON
+  # string-encoding unchanged, so this is the exact same tested
+  # merge-shape detector used below — not a second, drift-prone regex.
+  #
+  # #973: the command's SEPARATORS do not always survive unchanged — a
+  # literal tab (or other JSON-escaped whitespace) encodes as a
+  # multi-character escape sequence (`\t`, `\uXXXX`) that `is_merge_command`'s
+  # `\s+` regex class won't recognise as whitespace. Normalize the small set
+  # of escapes that matter BEFORE scanning, so a merge command with
+  # JSON-escaped separators is caught exactly like a space-separated one —
+  # see `_normalize_json_escapes` in _lib-extract-pr.sh for the decode and
+  # why it's only ever applied on this raw-payload path, never on COMMAND.
+  #
+  # A payload that isn't merge-shaped at all is a genuine no-op — exit 0,
+  # unchanged behaviour for the overwhelming majority of Bash calls this
+  # hook sees. A payload that DOES look merge-shaped but that we can't
+  # safely parse/verify fails CLOSED (exit 2) instead of silently letting
+  # an ungated merge through with an unverified CI status.
+  if is_merge_command "$(_normalize_json_escapes "$INPUT")"; then
+    echo "BLOCKED: CI gate cannot evaluate this command — jq is unavailable or .tool_input.command could not be parsed, but the raw input looks merge-related. Refusing to merge until CI status can be verified. Restore jq (see .claude/hooks/check-jq-installed.sh) and retry." >&2
+    exit 2
+  fi
+  exit 0
+fi
 
 if ! is_merge_command "$COMMAND"; then
   exit 0
@@ -86,7 +308,7 @@ fi
 # owner/repo`). Uses the shared extractor, which also recovers the repo from a
 # `gh api .../pulls/<N>/merge` or `glab api .../merge_requests/<N>/merge` URL
 # path so the CI-status check below is still scoped correctly.
-CMD_REPO=$(extract_repo_from_command "$COMMAND")
+CMD_REPO=$(resolve_merge_repo "$COMMAND")
 REPO_FLAG=""
 if [ -n "$CMD_REPO" ]; then
   REPO_FLAG="--repo $CMD_REPO"
@@ -113,6 +335,21 @@ fi
 # existing #790 test behaviour exactly.
 if echo "$COMMAND" | grep -qE '\btracker_pr_merge\b'; then
   FORGE=$(_forge_kind_for "$CMD_REPO")
+  # #1121: _forge_kind_for's registry read needs yq or python3+PyYAML; when
+  # NEITHER is installed it silently falls through to the global "gh"
+  # default. That default is ambiguous here — it could be a genuine gh-kind
+  # project, or a glab-kind project whose registry entry just couldn't be
+  # read. Cross-check with the dependency-free scan (see
+  # _registry_glab_fallback above) whenever the primary answer is "gh": it
+  # can only ever confirm "glab", never override a real "glab" result or
+  # invent a false positive for a project the registry doesn't explicitly
+  # mark as glab.
+  if [ "$FORGE" = "gh" ]; then
+    REGISTRY_FORGE=$(_registry_glab_fallback "$CMD_REPO")
+    if [ "$REGISTRY_FORGE" = "glab" ]; then
+      FORGE="glab"
+    fi
+  fi
 else
   FORGE=$(_forge_from_command "$COMMAND")
 fi
