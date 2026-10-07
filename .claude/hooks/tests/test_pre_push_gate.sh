@@ -207,16 +207,61 @@ case9() {
   # markdownlint config: just omit the trailing newline.
   printf '# README\nno-trailing-newline' > "$sb/README.md"
   (cd "$sb" && git add README.md && git commit -q -m "chore: add bad README")
-  # npx must be available for this case to be meaningful; skip gracefully if not.
-  if ! command -v npx >/dev/null 2>&1; then
-    echo "SKIP [tracked-bad-md-fails]: npx not available, case not executable"
-    return
-  fi
+  # Use a local npx stub so this gate test never depends on registry access or
+  # a package download. The test is about propagating a tracked lint failure,
+  # not about testing markdownlint-cli2 itself.
+  mkdir -p "$sb/bin"
+  cat > "$sb/bin/npx" <<'EOF'
+#!/bin/bash
+echo "MD047: Files should end with a single newline" >&2
+exit 1
+EOF
+  chmod +x "$sb/bin/npx"
+  PATH="$sb/bin:$PATH"
   run_hook "$sb" "$(push_json)" 2 "markdownlint: FAILED" "tracked-bad-md-fails"
   rm -rf "$sb"
 }
 
-case1; case2; case3; case4; case5; case6; case7; case8; case9
+# -------------------- CASE 10: marker MENTIONED in prose → does NOT bypass --------------------
+# Regression guard for #1097: the skip marker used to be grep-matched
+# unanchored, so a commit message that merely *discusses* the marker
+# (documentation, a review comment quoted verbatim, a revert body) matched
+# too and silently disabled every check. The match must be whole-line
+# (grep -x): a sentence that contains the marker string inline is NOT a
+# deliberate bypass, so the check must still run (and still block on a
+# failing command).
+case10() {
+  local sb; sb=$(make_sandbox)
+  cat > "$sb/.claude/project-config.json" <<'EOF'
+{"pre_push": {"commands": [{"name": "should-not-skip", "run": "echo oops; exit 1"}]}}
+EOF
+  # The marker appears INSIDE a sentence, not as its own line — this must
+  # NOT be treated as a deliberate bypass.
+  (cd "$sb" && git commit --amend -q -m "docs: explain the escape hatch
+
+This documents the <!-- pre-push: skip --> marker so contributors know
+it exists. It should not itself act as a bypass.")
+  run_hook "$sb" "$(push_json)" 2 "should-not-skip: FAILED" "marker-mentioned-in-prose-does-not-bypass"
+  rm -rf "$sb"
+}
+
+# -------------------- CASE 11: marker on its OWN LINE → still bypasses --------------------
+# The other direction of #1097's fix: a deliberate bypass — the marker as
+# a line by itself, exactly the shape the documented amend snippet emits —
+# must keep working after anchoring the match to -x.
+case11() {
+  local sb; sb=$(make_sandbox)
+  cat > "$sb/.claude/project-config.json" <<'EOF'
+{"pre_push": {"commands": [{"name": "should-skip", "run": "exit 1"}]}}
+EOF
+  (cd "$sb" && git commit --amend -q -m "fix: emergency hotfix
+
+<!-- pre-push: skip -->")
+  run_hook "$sb" "$(push_json)" 0 "pre-push gate bypassed by skip marker" "marker-own-line-still-bypasses"
+  rm -rf "$sb"
+}
+
+case1; case2; case3; case4; case5; case6; case7; case8; case9; case10; case11
 
 echo ""
 echo "==================================="

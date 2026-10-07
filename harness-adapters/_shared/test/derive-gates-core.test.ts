@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  deriveGatesFromDispatcher,
   deriveGatesFromSettings,
   extractCommandGlob,
   extractHookRelativePath,
@@ -57,6 +58,43 @@ test("globToRegExp matches a Claude Code Bash(...) glob against a real command s
 test("globToRegExp anchors — a glob must match the whole command, not a substring", () => {
   const re = globToRegExp("git commit *");
   assert.ok(!re.test("echo 'not git commit at all but contains git commit inside'"));
+});
+
+// Regression test for #899: globToRegExp must carry the `s` (dotall) flag so
+// `.*` crosses embedded newlines. Without it, a multi-line command string
+// (the conventional-commit norm — a subject line plus a body) fails to
+// match its own `Bash(<prefix> *)` glob, and the consuming gate is silently
+// skipped (fail-open) instead of firing. Both assertions below FAIL if the
+// `s` flag is removed from globToRegExp's `new RegExp(...)` call.
+test("globToRegExp — the derived RegExp carries the dotall (s) flag, so it matches across embedded newlines (#899)", () => {
+  const re = globToRegExp("git commit *");
+  assert.ok(re.flags.includes("s"), "globToRegExp's RegExp must carry the `s` (dotall) flag");
+});
+
+test("globToRegExp matches a multi-line `git commit -m` command (conventional-commit subject + body) — #899", () => {
+  const re = globToRegExp("git commit *");
+  // Real embedded newlines (template literal), not escaped "\n" text — this
+  // is what a shell actually hands the hook for `git commit -m $'subject\n\nbody'`.
+  const multiLineCommit = `git commit -m $'feat: add widget
+
+- detail one
+- detail two
+
+Closes #1'`;
+  assert.ok(re.test(multiLineCommit), "a multi-line git commit command must match its own Bash(git commit *) glob");
+});
+
+test("globToRegExp matches a multi-line `gh issue create --body` command — #899", () => {
+  const re = globToRegExp("gh issue create *");
+  const multiLineIssueCreate = `gh issue create --title "Bug: X" --body "Given a user
+When they do Y
+Then Z happens
+
+Repro steps here."`;
+  assert.ok(
+    re.test(multiLineIssueCreate),
+    "a multi-line gh issue create --body command must match its own Bash(gh issue create *) glob",
+  );
 });
 
 // ---------------------------------------------------------------------
@@ -127,6 +165,26 @@ test("deriveGatesFromSettings returns an empty table for settings with no PreToo
   assert.deepEqual(deriveGatesFromSettings({ hooks: {} }), []);
 });
 
+test("deriveGatesFromDispatcher parses unconditional and command-specific routing comments", () => {
+  const source = [
+    "# APEXYARD_DISPATCH_GATE: Bash|*|require-active-ticket.sh",
+    "# APEXYARD_DISPATCH_GATE: Bash|gh pr merge *|block-unreviewed-merge.sh",
+    "# APEXYARD_DISPATCH_GATE: Bash|gh api *|block-unreviewed-merge.sh",
+    "run_hook require-active-ticket.sh",
+  ].join("\n");
+  const gates = deriveGatesFromDispatcher(source);
+  const ticket = gates.find((g) => g.name === "require-active-ticket");
+  const merge = gates.find((g) => g.name === "block-unreviewed-merge");
+  assert.ok(ticket);
+  assert.equal(ticket!.wires.length, 1);
+  assert.equal(ticket!.wires[0]?.commandGlob, "*");
+  assert.ok(merge);
+  assert.deepEqual(
+    merge!.wires.map((w) => w.commandGlob).sort(),
+    ["gh api *", "gh pr merge *"],
+  );
+});
+
 // ---------------------------------------------------------------------
 // gateMatchesClaudeMatcher
 // ---------------------------------------------------------------------
@@ -159,11 +217,15 @@ test("gateMatchesClaudeMatcher: a gate never matches a matcher it isn't wired to
 // #840 C5's "reuse where the two runtimes allow" rests on.
 // ---------------------------------------------------------------------
 
-test("deriveGatesFromSettings, run against this repo's real .claude/settings.json, finds the named merge-gate hooks", () => {
+test("deriveGatesFromSettings plus deriveGatesFromDispatcher, run against this repo, finds the named merge-gate hooks", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const settingsPath = join(here, "..", "..", "..", ".claude", "settings.json");
+  const dispatcherPath = join(here, "..", "..", "..", ".claude", "hooks", "dispatch-bash.sh");
   const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as RawSettings;
-  const gates = deriveGatesFromSettings(raw);
+  const gates = [
+    ...deriveGatesFromSettings(raw),
+    ...deriveGatesFromDispatcher(readFileSync(dispatcherPath, "utf-8")),
+  ];
   const names = gates.map((g) => g.name);
 
   for (const expected of [
@@ -177,7 +239,7 @@ test("deriveGatesFromSettings, run against this repo's real .claude/settings.jso
     "block-private-refs-in-public-repos",
     "suggest-mcp-search",
   ]) {
-    assert.ok(names.includes(expected), `expected "${expected}" to be derived from the real settings.json`);
+    assert.ok(names.includes(expected), `expected "${expected}" to be derived from settings.json or dispatch-bash.sh`);
   }
 });
 

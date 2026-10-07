@@ -27,6 +27,7 @@ TRACKER_LIB="$HOOK_DIR/_lib-tracker.sh"
 CONFIG_LIB="$HOOK_DIR/_lib-read-config.sh"
 PORTFOLIO_LIB="$HOOK_DIR/_lib-portfolio-paths.sh"
 OPSROOT_LIB="$HOOK_DIR/_lib-ops-root.sh"
+RUNTIME_SCANNER="$HOOK_DIR/check-private-refs-runtime.sh"
 
 PASS=0
 FAIL=0
@@ -47,6 +48,8 @@ make_sandbox() {
   cp "$TRACKER_LIB"   "$sb/.claude/hooks/_lib-tracker.sh"
   cp "$CONFIG_LIB"    "$sb/.claude/hooks/_lib-read-config.sh"
   cp "$PORTFOLIO_LIB" "$sb/.claude/hooks/_lib-portfolio-paths.sh"
+  cp "$RUNTIME_SCANNER" "$sb/.claude/hooks/check-private-refs-runtime.sh"
+  chmod +x "$sb/.claude/hooks/check-private-refs-runtime.sh"
   [ -f "$OPSROOT_LIB" ] && cp "$OPSROOT_LIB" "$sb/.claude/hooks/_lib-ops-root.sh"
   cat > "$sb/.claude/project-config.defaults.json" <<'JSON'
 { "tracker": { "kind": "gh" } }
@@ -111,7 +114,54 @@ out=$(PATH="$SB/bin:$PATH" tracker_create "o/r" "Add login" "$BODY"); rc=$?
 assert_eq "tracker_create gh failure → non-zero exit" "1" "$rc"
 assert_eq "tracker_create gh failure → empty stdout"  ""  "$out"
 
+# #1327 — the CLI's own error text must reach stderr, not be discarded.
+# Without it every failure reads like an auth problem to the operator.
+cat > "$SB/bin/gh" <<'EOF'
+#!/bin/bash
+echo "could not add label: 'chore' not found" >&2
+exit 1
+EOF
+chmod +x "$SB/bin/gh"
+tracker_clear_cache
+out=$(PATH="$SB/bin:$PATH" tracker_create "o/r" "Add login" "$BODY" "chore" 2>"$SB/err"); rc=$?
+assert_eq "tracker_create gh failure → non-zero exit (stderr case)" "1" "$rc"
+assert_eq "tracker_create gh failure → stdout stays empty"          ""  "$out"
+assert_eq "tracker_create gh failure → gh error reaches stderr" "1" "$(grep -c "could not add label: 'chore' not found" "$SB/err")"
+
 rm -rf "$SB"
+
+# #1327 — same stderr contract for the glab and custom adapters. Both kinds
+# are set through project-config defaults, so no YAML parser is needed.
+SBE=$(make_sandbox)
+cat > "$SBE/bin/glab" <<'EOF'
+#!/bin/bash
+echo "glab: 403 Forbidden" >&2
+exit 1
+EOF
+chmod +x "$SBE/bin/glab"
+BODYE="$SBE/body.md"; printf 'body\n' > "$BODYE"
+for kind in glab custom; do
+  if [ "$kind" = "glab" ]; then
+    printf '{ "tracker": { "kind": "glab" } }\n' > "$SBE/.claude/project-config.defaults.json"
+    expect="glab: 403 Forbidden"
+  else
+    printf '%s\n' '{ "tracker": { "kind": "custom", "create_command": "echo \"custom: rejected\" >&2; false" } }' > "$SBE/.claude/project-config.defaults.json"
+    expect="custom: rejected"
+  fi
+  (
+    cd "$SBE" || exit 1
+    # shellcheck source=/dev/null
+    . "$SBE/.claude/hooks/_lib-tracker.sh"
+    tracker_clear_cache
+    out=$(PATH="$SBE/bin:$PATH" tracker_create "o/r" "t" "$BODYE" 2>"$SBE/err-$kind"); rc=$?
+    printf '%s|%s\n' "$rc" "$out"
+  ) > "$SBE/r-$kind"
+  IFS="|" read -r e_rc e_out < "$SBE/r-$kind"
+  assert_eq "tracker_create $kind failure → non-zero exit"           "1" "$e_rc"
+  assert_eq "tracker_create $kind failure → stdout stays empty"      ""  "$e_out"
+  assert_eq "tracker_create $kind failure → CLI error reaches stderr" "1" "$(grep -c "$expect" "$SBE/err-$kind")"
+done
+rm -rf "$SBE"
 
 # Shape-only contract — kind=none does not call a CLI; it returns 3 and emits
 # the body (if given) to stdout for manual/external filing. NOT a failure path.
@@ -173,6 +223,42 @@ EOF
   rm -rf "$SB2"
 else
   echo "SKIP: tracker_create glab per-project case (no yq / python3+PyYAML)"
+fi
+
+# Case 4b (#955) — glab prints the modern `/-/work_items/N` issue URL form.
+# _tracker_extract_ref_url must parse it (previously only matched /issues/N).
+if [ "$HAVE_YAML" = yes ]; then
+  SB2b=$(make_sandbox "version: 1
+projects:
+  - name: gl
+    repo: g/p
+    tracker:
+      kind: glab")
+  cat > "$SB2b/bin/glab" <<'EOF'
+#!/bin/bash
+if [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+  echo "Creating issue in g/p..."
+  echo "https://gitlab.com/g/p/-/work_items/77"
+fi
+EOF
+  chmod +x "$SB2b/bin/glab"
+  printf 'glab body\n' > "$SB2b/body.md"
+  (
+    cd "$SB2b" || exit 1
+    # shellcheck source=/dev/null
+    . "$SB2b/.claude/hooks/_lib-tracker.sh"
+    tracker_clear_cache
+    out=$(PATH="$SB2b/bin:$PATH" tracker_create "g/p" "GL title" "$SB2b/body.md")
+    printf '%s\t%s\n' \
+      "$(printf '%s' "$out" | jq -r '.ref // empty' 2>/dev/null)" \
+      "$(printf '%s' "$out" | jq -r '.url // empty' 2>/dev/null)"
+  ) > "$SB2b/result"
+  IFS=$'\t' read -r r_ref r_url < "$SB2b/result"
+  assert_eq "tracker_create glab work_items → ref parsed"  "77" "$r_ref"
+  assert_eq "tracker_create glab work_items → url parsed"  "https://gitlab.com/g/p/-/work_items/77" "$r_url"
+  rm -rf "$SB2b"
+else
+  echo "SKIP: tracker_create glab work_items case (no yq / python3+PyYAML)"
 fi
 
 # Case 5 — per-project custom create_command. The title/body pass via ENV

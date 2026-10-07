@@ -170,10 +170,40 @@ export function deriveGatesFromSettings(settings: RawSettings): GateDefinition[]
   return Array.from(byHook.values());
 }
 
+/**
+ * Derives Bash gate wires from the dispatcher's machine-readable routing
+ * comments. The dispatcher is the executable source for Claude Code after
+ * the Bash fan-out is collapsed, while this table keeps pi and opencode's
+ * derived gate views equivalent to the same routing.
+ */
+export function deriveGatesFromDispatcher(source: string): GateDefinition[] {
+  const byHook = new Map<string, GateDefinition>();
+  const row = /^\s*#\s*APEXYARD_DISPATCH_GATE:\s*([^|]+)\|([^|]*)\|([\w.-]+\.sh)\s*$/;
+  for (const line of source.split("\n")) {
+    const match = line.match(row);
+    if (!match) continue;
+    const [, claudeMatcher, glob, script] = match;
+    const hookRelativePath = `.claude/hooks/${script}`;
+    let gate = byHook.get(hookRelativePath);
+    if (!gate) {
+      gate = { name: hookNameFromPath(hookRelativePath), hookRelativePath, wires: [] };
+      byHook.set(hookRelativePath, gate);
+    }
+    gate.wires.push({ claudeMatcher: claudeMatcher.trim(), commandGlob: glob === "*" ? "*" : glob });
+  }
+  return Array.from(byHook.values());
+}
+
 /** Converts a Claude Code `if: "Bash(<glob>)"` glob (shell-style `*` wildcard) into an anchored RegExp. */
 export function globToRegExp(glob: string): RegExp {
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`);
+  // `s` (dotall) flag: without it, `.` never matches `\n`, so `.*` cannot
+  // cross the newlines in a multi-line command string (e.g. a conventional
+  // commit's `-m $'subject\n\nbody'`, or a `gh issue create --body` with a
+  // multi-line body). A gate whose glob fails to match a real multi-line
+  // command is a silent fail-open (see gateMatchesClaudeMatcher below) —
+  // #899.
+  return new RegExp(`^${escaped}$`, "s");
 }
 
 /**

@@ -6,6 +6,10 @@ argument-hint: "[--reset] [--enable-lsp]"
 effort: medium
 ---
 
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
+
 # /setup — ApexYard First-Run Bootstrap
 
 Configures `onboarding.yaml` for a new ApexYard fork in three exchanges instead of eight sequential questions. The "describe, propose, confirm" pattern gets most users from fork to working in under 2 minutes.
@@ -70,6 +74,16 @@ mkdir -p .claude/session && echo "setup" > .claude/session/active-bootstrap
 The marker is cleared in Step 8 below (and on the next SessionStart by `clear-bootstrap-marker.sh`, in case this skill is interrupted).
 
 See AgDR-0011 + me2resh/apexyard#150 for the design rationale.
+
+### Step 0.5: Install the tracked git hooks (REQUIRED)
+
+`core.hooksPath` is a **per-clone** git config value — it lives in `.git/config`, never committed, so every fresh clone of the ops fork starts unset regardless of how many sibling clones already have it configured. Left unset, `.githooks/pre-push` (tracked, but inert without this) never runs on a terminal `git push` — only Claude-Code-driven pushes go through the equivalent `pre-push-gate.sh` PreToolUse hook. Run the installer once per fork, here, so a fresh `/setup` always leaves the clone protected on both paths:
+
+```bash
+bash bin/install-git-hooks.sh
+```
+
+Idempotent — a re-run on an already-configured clone reports "no change" and exits 0. If it exits 1 (a real, different `core.hooksPath` the operator configured on purpose), report that plainly and move on without `--force` — overriding a deliberate adopter choice isn't this step's call to make silently. **If it exits 4, treat this as a hard failure of the step, not a warning**: exit 4 means the `git config core.hooksPath` write did not take effect (a stale `.git/config.lock`, a multi-valued key) and the installer is refusing to report success on an unverified write — this clone is **NOT** protected. Show the operator the installer's own error output verbatim and ask them to retry (`bash bin/install-git-hooks.sh`) before continuing `/setup`; do not silently proceed as if the clone were covered. See `bin/install-git-hooks.sh --help` and me2resh/apexyard#1086 for the full state machine (fresh / idempotent / stale-repair / deliberate-third-party / write-failed).
 
 ### Step 1: Check current state
 
@@ -145,8 +159,8 @@ The full setup lives in `docs/multi-project.md` § "Split-portfolio mode — pub
    - `.gitignore` with `workspace/*/` so the inner clones don't get double-tracked in the private repo either
    - initial commit + push
 6. **Configure path resolution in the fork** (recommended — v2 config-block mode):
-   - Append `.gitignore` lines for `apexyard.projects.yaml`, `projects`, `onboarding.yaml`, AND `workspace` so none of them get accidentally staged in the public fork even on a stray `git add -A`. (The first two cover registry + per-project docs; the last two are the v2 additions.)
-   - Untrack any tracked `projects/README.md`, `onboarding.yaml`, or `workspace/README.md` from the upstream framework: `git rm --cached -r projects onboarding.yaml workspace 2>/dev/null || true`.
+   - Append `.gitignore` lines for `apexyard.projects.yaml`, `projects`, and `onboarding.yaml`. Keep the framework's `workspace/*` + `!workspace/README.md` pair: it ignores every adopter workspace entry while leaving the committed convention README visible and re-includable. Do not add a broad `workspace` rule; Git cannot re-include the README when its parent directory is excluded.
+   - Untrack the upstream framework's tracked `projects/README.md` and `onboarding.yaml`: `git rm --cached -r projects onboarding.yaml 2>/dev/null || true`. **Do not untrack `workspace/README.md`** — it is a public framework artefact and stays in the fork per AgDR-0021 § G.
    - Write `.claude/project-config.json` with the v2 `portfolio:` block pointing at the sibling repo. Substitute the actual sibling-dir name the operator chose for `apexyard-portfolio` below:
 
      ```json
@@ -175,7 +189,7 @@ The full setup lives in `docs/multi-project.md` § "Split-portfolio mode — pub
      # touch .apexyard-fork
      ```
 
-   - Stage `.gitignore`, `.claude/project-config.json`, and `.apexyard-fork` for commit. All three are per-fork, not per-machine.
+   - Stage `.gitignore` and `.apexyard-fork` for commit — both are per-fork, not per-machine. **Do NOT stage `.claude/project-config.json`** (me2resh/apexyard#1031): it is gitignored and untracked upstream, so `git add` on it exits 1 and the commit step that follows never runs. It is also the wrong thing to commit — in split-portfolio mode its `portfolio` block names the private sibling repo's path, and the ops fork may be public. Do not reach for `git add -f`; that recreates the exact bug #1031 fixed, where a tracked copy is overwritten by any later `git checkout` and the adopter's private config is lost with no way to restore it.
    - **Legacy fallback (framework-version < #145)**: if the adopter's framework predates the `portfolio:` config block, fall back to creating symlinks pointing at `../<sibling-dir>/apexyard.projects.yaml` and `../<sibling-dir>/projects`. The helper resolves either way. v2 (`onboarding` / `workspace_dir` / `.apexyard-fork`) requires framework ≥ #242 — older forks should run `/update` first to pick up the v2 plumbing before going through this branch.
 7. **Verify**: source `.claude/hooks/_lib-portfolio-paths.sh` and call `portfolio_validate`. Skill MUST refuse to declare success if validate fails — surface the specific failure and ask the operator to fix it before re-running.
 
@@ -477,16 +491,16 @@ Which harness(es) do you run ApexYard with?
 
 - **1 / default / empty** → print nothing further, continue straight to Step 3. This is the zero-friction path — most adopters are on Claude Code and shouldn't see any more text.
 - **6** → print one line — *"No adapter for that harness yet. The mechanical gates (`.claude/hooks/*.sh`) are portable bash; see `docs/harnesses/README.md` § 'Adapter-authoring pattern for future harnesses' if you want to write one."* — then continue to Step 3.
-- **2 / 3 / 4 / 5 (one or more)** → for each selected harness, print its install command + its one precondition, sourced from `docs/harnesses/README.md` (read it fresh rather than hardcoding — the matrix is the single source of truth and does change). As of the 2026-07-09 matrix:
+- **2 / 3 / 4 / 5 (one or more)** → for each selected harness, print its install command + its one precondition, sourced from `docs/harnesses/README.md` (read it fresh rather than hardcoding — the matrix is the single source of truth and does change). Snapshot below. Refresh from the doc before printing:
 
   | Harness | Install | Precondition | Tier |
   |---------|---------|---------------|------|
   | opencode | `bash bin/install-opencode-adapter.sh` | run opencode headless with `--auto` | ✅ live-proven |
   | pi | `bash bin/install-pi-adapter.sh` | run pi headless with `-a` / `--approve` | ✅ live-proven |
   | Codex | `bash bin/sync-codex-adapter.sh` | grant hook-trust — `/hooks` interactively, `--dangerously-bypass-hook-trust` for a one-off headless run, or a user-level `~/.codex/hooks.json` | ✅ live-proven |
-  | Cursor | `bin/install-cursor-adapter.sh` | installs to **user-level** `~/.cursor/hooks.json` | 🟡 **failClosed-only** — not live-proven; the `cursor-agent` CLI ignores hooks entirely |
+  | Cursor | `bash bin/install-cursor-adapter.sh` | enable third-party configs; leftover full adapter must be replaced | ✅ native in the IDE (2026-09-16). CLI ignores hooks. Not in conformance CI |
 
-  **Honesty is load-bearing here — never round Cursor up.** Say it exactly the way `docs/harnesses/README.md` says it: opencode, pi, and Codex are live-proven (a real credentialed model turn was actually blocked by the delegated gate); Cursor blocks only by *failing closed* on a hook-runner error, which is a materially weaker guarantee than verified delegated execution. Reuse the tier wording verbatim rather than paraphrasing it into something that sounds stronger.
+  **Honesty is load-bearing here — never round a harness's tier up.** Print the current row from `docs/harnesses/README.md`. For Cursor, say native in the IDE, the `cursor-agent` CLI ignores hooks, a leftover full adapter can lock the session, and conformance CI has no headless path. Do not restore the retired failClosed-only claim.
 
   For each selected harness, link the per-harness page for the full workflow: `docs/harnesses/<harness>.md` (e.g. `docs/harnesses/opencode.md`).
 
@@ -702,7 +716,7 @@ Always remove the marker on a clean exit so subsequent edits in the same session
 6. **No project-config.json.** `/setup` configures the FRAMEWORK (onboarding.yaml). Per-project config is handled by `/handover` and `/idea` when projects enter the portfolio.
 7. **Never auto-install language runtimes.** Step 2c installs LSP servers (e.g. `typescript-language-server`, `pyright`, `gopls`, `rust-analyzer`) but never the underlying runtime (`node`, `python`, `go`, `rustup`). If a runtime is missing, refuse the LSP install gracefully and tell the operator what to install.
 8. **Print plugin-install commands; never invoke them.** The Claude Code plugin marketplace command shape (`/plugin marketplace add`, `/plugin install`, `/reload-plugins`) is empirically stable — Step 2c.5(d) prints a copy-paste block for the operator. But `/plugin` is a Claude Code UI built-in, not a shell command, so the skill never runs the commands itself — it prints them. Always emit the `marketplace add` line; it's idempotent and recovers the case where the docs' auto-load claim doesn't fire on a fresh install.
-9. **`docs/harnesses/README.md` is the single source of truth for harness support.** Step 2d summarises and links it — it never copies the capability matrix inline as a maintained duplicate. When printing a harness's install command / precondition / tier, read the doc fresh rather than trusting a stale table baked into this skill; the matrix changes as adapters move through live-verification. Never round a harness's tier up (Cursor is failClosed-only, not live-proven — say so).
+9. **`docs/harnesses/README.md` is the single source of truth for harness support.** Step 2d summarises and links it — it never copies the capability matrix inline as a maintained duplicate. When printing a harness's install command / precondition / tier, read the doc fresh rather than trusting a stale table baked into this skill; the matrix changes as adapters move through live-verification. Never round a harness's tier up. Do not restore the retired failClosed-only claim for Cursor.
 
 ---
 

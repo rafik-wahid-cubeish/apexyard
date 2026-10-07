@@ -1,14 +1,18 @@
 ---
 name: approve-design
 description: Record per-PR design-review approval (UI merge gate). ONLY on an explicit per-PR designer "approved".
-disable-model-invocation: false
+disable-model-invocation: true
 argument-hint: "<pr-number>"
 effort: low
 ---
 
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
+
 # /approve-design - Record Per-PR Design-Review Approval
 
-Writes `.claude/session/reviews/<owner>__<repo>__<pr>-design.approved` (repo-qualified path, see AgDR-0060) with the current HEAD SHA so the `require-design-review-for-ui.sh` merge-gate hook will let a UI PR through. Without this marker, the hook blocks merges on any PR that touches `.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, `.sass`, `.less`, or `design-tokens*` files.
+Writes `.claude/session/reviews/<owner>__<repo>__<pr>-design.approved` (repo-qualified path, see AgDR-0060) with the current HEAD SHA so the `require-design-review-for-ui.sh` merge-gate hook will let a UI PR through. Without this marker, the hook blocks merges on any PR that touches a UI file — the pattern list lives in `.claude/hooks/_lib-ui-paths.sh` (React/Vue/Svelte/Astro/MDX components, template-engine files, styles, and design tokens), shared with step 5 below so the two checks never diverge (me2resh/apexyard#1390).
 
 This skill is the design-review analog of `/approve-merge` (which writes the CEO marker for the merge gate). Same pattern, different gate.
 
@@ -81,11 +85,22 @@ MARKER_HOME="${OPS_ROOT:-$REPO_ROOT}"
 . "$MARKER_HOME/.claude/hooks/_lib-review-markers.sh"
 # Base (host) repo — the canonical marker key: it matches Rex's marker AND the
 # merge gate's lookup (which keys on the merge command's base repo, #765). Prefer
-# the repo resolved in step 1 (already the base, #687) as the hint; else
-# headRepository. pr_base_repo confirms the base from the PR URL and falls back to
-# the hint when base == head, so same-repo PRs are unchanged.
-HINT_REPO="${REPO:-$(gh pr view <pr> --json headRepository --jq '.headRepository.nameWithOwner' 2>/dev/null)}"
-PR_HOST_REPO=$(pr_base_repo <pr> "$HINT_REPO")
+# the repo resolved in step 1 (already the base, #687); if it wasn't given, fall
+# back to the CURRENT checkout's own remote — a deterministic, non-ambient
+# source of truth. Do NOT fall back to an unscoped
+# `gh pr view <pr> --json headRepository`: that call reads the wrong field (the
+# PR's head/fork) and is itself an ambient-resolved gh query that can silently
+# prefer the wrong repo in a fork checkout (#887). pr_base_repo now REQUIRES
+# this repo and scopes its own gh query to it — never gh's ambient default —
+# so same-repo PRs still resolve unchanged.
+if [ -n "$REPO" ]; then
+  REPO_FOR_BASE="$REPO"
+else
+  origin_url=$(git remote get-url origin 2>/dev/null)
+  origin_url="${origin_url%.git}"
+  REPO_FOR_BASE=$(printf '%s' "$origin_url" | sed -E 's#^(https?://[^/]+/|git@[^:]+:)##')
+fi
+PR_HOST_REPO=$(pr_base_repo <pr> "$REPO_FOR_BASE")
 PR_REPO="$PR_HOST_REPO"
 REX=$(review_marker_path "$PR_HOST_REPO" <pr> rex "$MARKER_HOME")
 [ -f "$REX" ] && [ "$(tr -d '[:space:]' < "$REX")" = "$(git rev-parse HEAD)" ]
@@ -97,8 +112,19 @@ If Rex's marker is missing or its SHA doesn't match HEAD, refuse and tell the us
 
 Check whether the PR's diff includes files that would trigger the design-review gate. If the PR has NO UI files, the marker is unnecessary — tell the user and skip.
 
+Read the pattern list from `_lib-ui-paths.sh` — the same source `require-design-review-for-ui.sh` reads — instead of a separate hard-coded copy. The two lists drifted apart before this (me2resh/apexyard#1390); sourcing the shared library keeps them in sync going forward:
+
 ```bash
-gh pr diff <pr> --name-only | grep -qE '\.(tsx|jsx|vue|svelte|css|scss|sass|less)$|design-tokens'
+# MARKER_HOME and REPO_ROOT already resolved in step 4. Source the library
+# from MARKER_HOME (the hook scripts live in the ops fork), but pass
+# REPO_ROOT — the PR's own git root — to look up `.ui_paths`. That is the
+# same root require-design-review-for-ui.sh reads. Passing MARKER_HOME here
+# instead reads the wrong project-config.json inside a workspace/ clone,
+# so a project-level `.ui_paths` override could make this check and the
+# gate disagree (me2resh/apexyard#1397).
+. "$MARKER_HOME/.claude/hooks/_lib-ui-paths.sh"
+UI_GLOB_PATTERN=$(ui_effective_globs_pipe "$REPO_ROOT")
+gh pr diff <pr> --name-only | grep -qE "$UI_GLOB_PATTERN"
 ```
 
 ### 6. Write the design marker
@@ -136,7 +162,10 @@ Design approval recorded for PR #<pr> at <sha>. The design-review merge gate wil
 
 ```
 Designer: "The mockup in Figma looks great, ship it"
-You: *invokes /approve-design 42*  ← WRONG
+You: *tries to invoke /approve-design 42*  ← WRONG, twice over: a mockup nod is
+                                             not implementation review, AND
+                                             since #1042 the model cannot
+                                             invoke this skill at all.
 ```
 
 The designer approved a **mockup**, not the **PR's implementation of that mockup**. The implementation might differ from the mockup. The correct flow:
@@ -146,7 +175,9 @@ Designer: "The mockup in Figma looks great, ship it"
 You: *implements the mockup in PR #42*
 You: "PR #42 implements the approved mockup. Can you review the PR diff to confirm the implementation matches?"
 Designer: "Reviewed PR #42, implementation matches the mockup. Design approved."
-You: *invokes /approve-design 42*  ← CORRECT
+You: "Then run /approve-design 42 to record it."
+Designer: /approve-design 42       ← CORRECT: a human invokes it. The skill is
+                                     human-only (#1042), so the model cannot.
 ```
 
 Two distinct moments. One is mockup approval (design phase). The other is implementation-review approval (code-review phase). They are not the same approval.

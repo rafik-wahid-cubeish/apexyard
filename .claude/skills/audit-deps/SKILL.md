@@ -1,10 +1,14 @@
 ---
 name: audit-deps
 description: Audit dependencies for vulnerabilities, outdated packages, and license compliance.
-disable-model-invocation: true
+disable-model-invocation: false
 argument-hint: "[project-path]"
 allowed-tools: Bash, Read, Grep, Glob
 ---
+
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
 
 # /audit-deps — Dependency Audit
 

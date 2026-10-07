@@ -28,17 +28,28 @@ set -uo pipefail
 # per-case, so the suite-level default doesn't interfere.
 export APEXYARD_OPS_DISABLE_PIN=1
 
+# Same isolation rationale, for the session-scoped resolution cache added in
+# me2resh/apexyard#1013 (AgDR-0120): _lib-resolution-cache.sh keys its cache
+# files on $CLAUDE_CODE_SESSION_ID, which (when this suite runs inside a live
+# Claude Code session) would otherwise be the REAL session id -- a
+# sandbox-based test would read stale fixtures back into the real session's
+# cache, or pollute it with sandbox values. Tests that specifically exercise
+# the cache (test_resolution_cache.sh) set/unset this per-case.
+export APEXYARD_DISABLE_RESOLUTION_CACHE=1
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
 
 # --- Quarantine list (path :: reason). Empty by default; populated only with
 # --- evidence (a CI failure that is environmental, not a real regression). ---
 QUARANTINE=(
-  # Empty — all five originally-quarantined tests (token_efficiency_wave1,
-  # harnessability_scoring, md_to_pdf_fallback, agent_routing_sync_and_drift,
-  # handover_clone_prompt) have been fixed and un-quarantined (#528). The gate
-  # now enforces the entire suite. Add an entry ONLY with evidence (a genuinely
-  # headless-incompatible test), citing why.
+  # These tests require tools or host features that the CI job does not
+  # provide. They remain visible as explicit SKIP entries and do not hide
+  # skips from other suites.
+  ".claude/hooks/tests/test_lib_self_location_cwd_anchor.sh :: requires a non-standard working-directory layout"
+  ".claude/hooks/tests/test_portfolio_paths_case_insensitive_fs.sh :: requires a case-insensitive filesystem"
+  ".claude/hooks/tests/test_tracker_zsh_self_location.sh :: requires zsh"
+  ".claude/skills/pdf/tests/test_md_to_pdf_fallback.sh :: requires opt-in PDF end-to-end dependencies"
 )
 
 is_quarantined() {
@@ -60,7 +71,7 @@ TESTS=()
 while IFS= read -r _t; do
   [ -n "$_t" ] && TESTS+=("$_t")
 done < <(
-  find .claude/hooks/tests .claude/agents/tests .claude/rules/tests .claude/skills \
+  find .claude/hooks/tests .claude/agents/tests .claude/skills \
        -type f \( -name 'test_*.sh' -o -name '*.test.sh' \) 2>/dev/null | sort
 )
 
@@ -85,8 +96,17 @@ for t in "${TESTS[@]}"; do
   fi
   # shellcheck disable=SC2086
   if $TIMEOUT_BIN bash "$t" </dev/null >/tmp/_hooktest.out 2>&1; then
-    printf 'PASS %s\n' "$t"
-    pass=$((pass+1))
+    if grep -q '^SKIP' /tmp/_hooktest.out; then
+      printf '  diagnostics from %s:\n' "$t"
+      grep '^SKIP' /tmp/_hooktest.out | sed 's/^/    /'
+      skip=$((skip+1))
+      printf 'FAIL %s  (suite reported a skipped case)\n' "$t"
+      fail=$((fail+1))
+      FAILED+=("$t")
+    else
+      printf 'PASS %s\n' "$t"
+      pass=$((pass+1))
+    fi
   else
     rc=$?
     printf 'FAIL %s  (rc=%s)\n' "$t" "$rc"

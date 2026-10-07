@@ -1,3 +1,15 @@
+---
+name: approve-architecture
+description: Record per-PR architecture-review approval for design-artifact PRs (required by the architecture gate). ONLY on an explicit per-PR architect "approved".
+disable-model-invocation: true
+argument-hint: "<pr-number>"
+effort: low
+---
+
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
+
 # /approve-architecture — Record Per-PR Design-Review Approval
 
 Writes `.claude/session/reviews/<owner>__<repo>__<pr>-architecture.approved` (repo-qualified path, see AgDR-0060) with the current HEAD SHA so the `require-architecture-review.sh` merge-gate hook will let a design-artifact PR through. Without this marker, the hook blocks merges on any PR that touches a technical design, a migration AgDR, or a feature spec / PRD.
@@ -72,11 +84,21 @@ MARKER_HOME="${OPS_ROOT:-$REPO_ROOT}"
 # Base (host) repo — the canonical marker key: it matches solution-architect.md's
 # architecture marker AND the require-architecture-review.sh gate's lookup (which
 # keys on the merge command's base repo, #765). Prefer the repo resolved in step 1
-# (already the base, #687) as the hint; else headRepository. pr_base_repo confirms
-# the base from the PR URL and falls back to the hint when base == head, so
-# same-repo PRs are unchanged.
-HINT_REPO="${REPO:-$(gh pr view <pr> --json headRepository --jq '.headRepository.nameWithOwner' 2>/dev/null)}"
-PR_HOST_REPO=$(pr_base_repo <pr> "$HINT_REPO")
+# (already the base, #687); if it wasn't given, fall back to the CURRENT
+# checkout's own remote — a deterministic, non-ambient source of truth. Do NOT
+# fall back to an unscoped `gh pr view <pr> --json headRepository`: that call
+# reads the wrong field (the PR's head/fork) and is itself an ambient-resolved
+# gh query that can silently prefer the wrong repo in a fork checkout (#887).
+# pr_base_repo now REQUIRES this repo and scopes its own gh query to it — never
+# gh's ambient default — so same-repo PRs still resolve unchanged.
+if [ -n "$REPO" ]; then
+  REPO_FOR_BASE="$REPO"
+else
+  origin_url=$(git remote get-url origin 2>/dev/null)
+  origin_url="${origin_url%.git}"
+  REPO_FOR_BASE=$(printf '%s' "$origin_url" | sed -E 's#^(https?://[^/]+/|git@[^:]+:)##')
+fi
+PR_HOST_REPO=$(pr_base_repo <pr> "$REPO_FOR_BASE")
 PR_REPO="$PR_HOST_REPO"
 REX=$(review_marker_path "$PR_HOST_REPO" <pr> rex "$MARKER_HOME")
 [ -f "$REX" ] && [ "$(tr -d '[:space:]' < "$REX")" = "<headRefOid from step 3>" ]
@@ -126,17 +148,34 @@ Architecture approval recorded for PR #<pr> at <sha>. The architecture-review me
 
 ```
 Architect: "The approach we discussed sounds right, go for it"
-You: *invokes /approve-architecture 42*  ← WRONG
+You: *tries to invoke /approve-architecture 42*  ← WRONG, twice over: a verbal
+                                                  nod on an approach is not a
+                                                  review of the committed design
+                                                  artifact, AND since #1042 the
+                                                  model cannot invoke this skill
+                                                  at all.
 ```
 
 A verbal approval of an *approach* is not a review of the *committed design artifact*. The correct flow:
 
 ```
 Tech Lead: *commits the technical design to PR #42*
-You: "PR #42 carries the technical design. Run /design-review to have Tariq review it against the architecture lens?"
-... Tariq reviews, verdict APPROVED ...
-You: *Tariq writes the marker automatically* — OR a human architect says "design in #42 reviewed and approved"
-You: *invokes /approve-architecture 42*  ← CORRECT
+You: *runs /design-review so Tariq reviews it against the architecture lens*
+... Tariq reviews, verdict APPROVED, and writes the marker himself ...
+                                  ← DONE. No /approve-architecture needed.
+```
+
+Tariq writing the marker on an APPROVED verdict is the normal path, and it
+already satisfies the gate. This skill is the **operator path** for the other
+case: a *human* architect reviewed the design, or the marker needs re-recording
+after a rebase.
+
+```
+Human architect: "I've reviewed the design in #42 against the lens. Approved."
+You: "Then run /approve-architecture 42 to record it."
+Human architect: /approve-architecture 42   ← CORRECT: a human invokes it. The
+                                              skill is human-only (#1042), so
+                                              the model cannot.
 ```
 
 ## Relationship to other approval skills

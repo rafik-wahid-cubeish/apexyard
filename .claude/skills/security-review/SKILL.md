@@ -1,10 +1,14 @@
 ---
 name: security-review
-description: Security-focused PR review for vulnerabilities and best practices. Invokes the Security Reviewer agent (Shield).
-disable-model-invocation: true
+description: Security-focused PR review for vulnerabilities and best practices. Invokes the Security Reviewer agent (Hakim).
+disable-model-invocation: false
 argument-hint: "<pr-number> [repo]"
 allowed-tools: Bash, Read, Grep, Glob
 ---
+
+## Writing rule
+
+When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
 
 # /security-review — Security Review
 
@@ -20,7 +24,7 @@ Per-language LSP plugins live in Claude Code's marketplace. Install once; the sk
 
 When `/security-review` runs:
 
-1. **Primary reviewer**: the **Security Reviewer agent (Shield)** at [`.claude/agents/security-reviewer.md`](../../agents/security-reviewer.md) — runs the automated security checklist.
+1. **Primary reviewer**: the **Security Reviewer agent (Hakim)** at [`.claude/agents/security-reviewer.md`](../../agents/security-reviewer.md) — runs the automated security checklist.
 2. **Human approval gate**: the **[Security Auditor](../../../roles/security/security-auditor.md)** role — activates on any PR that touches auth / crypto / secrets / user data / PII, or when `/security-review` is explicitly invoked.
 3. **Escalation for strategic calls**: the **[Head of Security](../../../roles/security/head-of-security.md)** — threat modelling, compliance decisions, or novel attack surfaces.
 4. **For active testing**: the **[Penetration Tester](../../../roles/security/penetration-tester.md)** — exploit discovery, API security review, pre-release security sign-off.
@@ -45,11 +49,17 @@ Invoke for PRs that touch:
 - Third-party integrations
 - Cryptography or secrets
 
+## Running tests in a scratch clone
+
+Hakim may need to run tests or attack probes against the PR head, outside this repository's working tree. Use a plain `git clone` into a literal scratch path. Or export the PR head with `git archive | tar -x` into a literal non-git directory. The export step still needs an active session ticket. A later write to a literal path inside that directory can use the me2resh/apexyard#883 exemption. If a hook blocks a command, stop that step. Report the exact command, the hook, and its message to the orchestrator. Never rephrase, split, encode, or disguise a command to get past a hook. Full pattern: `.claude/agents/security-reviewer.md` § "Running tests in a scratch clone".
+
+The reviewer mutation lock blocks `git clone`, `git fetch`, and `git checkout` while the active-reviewer marker exists. Prepare the scratch clone and fetch the PR head before step 0 arms the marker.
+
 ## Process
 
 ### 0. Write the active-reviewer marker (REQUIRED — me2resh/apexyard#843)
 
-Before spawning the Security Reviewer agent, write the active-reviewer session marker so `warn-review-marker-write.sh` lets a `*-security.approved` write through the blocking marker gate (same mechanism as `/code-review`'s rex marker). At skill entry:
+Before spawning the Security Reviewer agent, write the active-reviewer session marker. It records that this review pass is the sanctioned one and suppresses `warn-review-marker-write.sh`'s advisory warning on the `*-security.approved` write (same convention as `/code-review`'s rex marker; that hook warns and never blocks since #1026 — AgDR-0111). The marker is scoped to THIS Claude Code session (me2resh/apexyard#1376) — resolve its path through `active_reviewer_marker_path`, never write the bare `.claude/session/active-reviewer` path directly. At skill entry:
 
 ```bash
 ops_root=$(git rev-parse --show-toplevel)
@@ -59,19 +69,56 @@ while [ -n "$r" ] && [ "$r" != "/" ]; do
   [ -f "$r/onboarding.yaml" ] && [ -f "$r/apexyard.projects.yaml" ] && { ops_root="$r"; break; }
   r=$(dirname "$r")
 done
-mkdir -p "$ops_root/.claude/session"
-printf '%s\n' "<owner/repo>#<pr>:security" > "$ops_root/.claude/session/active-reviewer"
+. "$ops_root/.claude/hooks/_lib-review-markers.sh"
+active_marker=$(active_reviewer_marker_path "$ops_root")
+mkdir -p "$(dirname "$active_marker")"
+printf '%s\n' "<owner/repo>#<pr>:security" > "$active_marker"
 ```
 
-On skill exit (after the review is posted), clear the marker:
+On skill exit (after the review is posted), clear the marker. Shell variables do not persist across separate Bash tool calls, so the exit step re-resolves `ops_root` and `active_marker` from scratch — it does not reuse the step-0 variable, which would silently be empty in a later call and turn the `rm -f` into a no-op:
 
 ```bash
-rm -f "$ops_root/.claude/session/active-reviewer"
+ops_root=$(git rev-parse --show-toplevel)
+r="$ops_root"
+while [ -n "$r" ] && [ "$r" != "/" ]; do
+  [ -f "$r/.apexyard-fork" ] && { ops_root="$r"; break; }
+  [ -f "$r/onboarding.yaml" ] && [ -f "$r/apexyard.projects.yaml" ] && { ops_root="$r"; break; }
+  r=$(dirname "$r")
+done
+. "$ops_root/.claude/hooks/_lib-review-markers.sh"
+active_marker=$(active_reviewer_marker_path "$ops_root")
+rm -f "$active_marker"
 ```
 
-Without this marker, a build-class sub-agent attempting the same write is correctly blocked — see `.claude/hooks/warn-review-marker-write.sh` and `.claude/rules/pr-workflow.md` § "Build agents cannot self-review".
+Nothing mechanically stops a build-class sub-agent writing the same file; what makes this marker legitimate is that a real, independent review happened. See `.claude/hooks/warn-review-marker-write.sh` and `.claude/rules/pr-workflow.md` § "Build agents cannot self-review".
+
+### 0a. Never hand the reviewer a marker path (me2resh/apexyard#1144)
+
+**The spawn prompt for Hakim MUST NOT contain a literal marker path.** Say
+*"write your approval marker on an APPROVED verdict"*; say nothing about where.
+
+Hakim already resolves the correct path through `review_marker_path` — the
+repo-qualified `<owner>__<repo>__<pr>-security.approved` form from AgDR-0060,
+which is the exact path the gates read. A path in the prompt overrides that
+correct resolution: the agent obeys the instruction it was handed, and the
+marker lands at the bare-number `<pr>-security.approved` instead. **No gate reads
+that path** — there is no bare-number fallback on any on-disk marker lookup.
+
+The failure is silent in the dangerous direction. `ls .claude/session/reviews/`
+shows a file that reads, to a human, like a valid approval; only the merge
+attempt reveals otherwise. And at that moment the obvious repair — moving the
+file into place — is marker forging, the behaviour
+[`pr-workflow.md`](../../rules/pr-workflow.md) § "Build agents cannot
+self-review" exists to prevent. The right recovery is always: delete the
+gate-invisible file and re-run a real review.
+
+`warn-unqualified-review-marker.sh` warns (advisory, never blocks) when a
+bare-number marker appears, and the merge gates name the near-miss in their
+refusal message — but the cheap fix is upstream of both: don't pass a path.
 
 ## Security Checklist
+
+> Baseline: OWASP Top 10 (2025) — supply-chain failures are now #3; use OWASP ASVS 5.0 as the verification baseline for these checks.
 
 ### Secrets & Credentials
 
@@ -128,7 +175,7 @@ Posts a GitHub review with:
 - Issues with severity
 - Verdict
 
-Invokes: Security Reviewer Agent (Shield)
+Invokes: Security Reviewer Agent (Hakim)
 
 ## Persist the run + render trend
 

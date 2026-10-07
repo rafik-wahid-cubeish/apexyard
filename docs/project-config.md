@@ -1,6 +1,9 @@
 # Project Config
 
-`.claude/project-config.defaults.json` ships the framework defaults. Each fork optionally creates `.claude/project-config.json` to override specific top-level keys. Both files live inside `.claude/`, so edits are exempt from the ticket-first hook (per `.claude/rules/workflow-gates.md`).
+`.claude/project-config.defaults.json` contains the framework defaults. A fork
+can create `.claude/project-config.json` to override selected keys. Both files
+live in `.claude/`, so the ticket-first hook does not block these edits. See
+`.claude/rules/workflow-gates.md` for the exemption.
 
 Related: apexyard#109 introduced this scheme; apexyard#107, #111, #112, #113, #114, #115 all read from it.
 
@@ -9,11 +12,68 @@ Related: apexyard#109 introduced this scheme; apexyard#107, #111, #112, #113, #1
 | File | Who maintains | Purpose |
 | --- | --- | --- |
 | `.claude/project-config.defaults.json` | apexyard upstream | Shipped defaults. Do not edit in a fork — upstream syncs via `/update`. |
-| `.claude/project-config.json` | fork owner | Overrides. Optional. Commit or gitignore per the fork's preference. |
+| `.claude/project-config.example.json` | apexyard upstream | Tracked template. Copy it to `project-config.json` to activate. Carries the framework repo's own pre-push dog-fooding as a worked example. |
+| `.claude/project-config.json` | fork owner | Overrides. Optional. **Gitignored and untracked upstream** — keep it that way. |
+
+### Why the real file is untracked (apexyard#1031)
+
+This follows the `onboarding.example.yaml` and `onboarding.yaml` pattern. The
+example is tracked so upstream can improve it. The real file stays local.
+
+Before #1031, the framework tracked `project-config.json` and listed it in
+`.gitignore`. Git does not ignore a file that is already tracked. A checkout
+could therefore overwrite a fork's local configuration. For a split portfolio,
+that could remove the `portfolio` block and break path resolution. The private
+content was not in git, so the file could not be restored from history.
+
+**If you have an existing fork that committed this file**, run `git rm --cached .claude/project-config.json` once. It leaves the file on disk and lets the ignore entry finally apply. Back the file up first if it holds a `portfolio` block: it is not recoverable from git.
+
+#### Resolving the `/update` conflict — use `--cached`, or you lose the file
+
+If you sync before doing the above, the merge hits a modify/delete conflict, because upstream deleted the file while your fork modified it:
+
+```
+CONFLICT (modify/delete): .claude/project-config.json deleted in upstream
+and modified in HEAD. Version HEAD of .claude/project-config.json left in tree.
+```
+
+Git leaves your version on disk, so **nothing is lost yet**. The trap is the resolution. "Accept upstream's deletion" is the natural reading, and the obvious command for it destroys your config:
+
+| Resolution | Effect |
+|---|---|
+| `git rm .claude/project-config.json` | ❌ removes it from the index **and from disk** — your `portfolio` block is gone, and it was never in git to restore from |
+| `git rm --cached .claude/project-config.json` | ✅ removes it from the index only; the file stays on disk and the ignore entry now applies |
+
+Always use `--cached` here. Back the file up first regardless — this is the same unrecoverable loss described above, reached by a different route.
+
+### Why the framework's own `pre_push` is in the example, not the defaults
+
+The defaults file would be the obvious home, and it is the wrong one. `_lib-read-config.sh` merges with `jq -s '.[0] * .[1]'`, so an adopter who defines no `pre_push` of their own **inherits whatever the defaults file ships** — which would mean every fork running apexyard's repo-specific commands on push, including its own `test_subpack_extraction.sh`. `pre_push.commands` in the defaults therefore stays `[]`, and `.claude/hooks/tests/test_project_config_untracked.sh` guards that it stays that way.
 
 ## Merge semantics
 
-**Shallow** at the top level. If the override file defines `"ticket": {...}`, that entire subtree replaces the default `ticket` subtree. To extend rather than replace, copy the default fields and add new ones. This keeps the merge behaviour predictable without requiring deep-merge semantics in shell scripts.
+Objects merge recursively. Override values win scalar conflicts. Arrays replace
+the inherited array as a whole. An override containing only
+`"portfolio": {"registry": "custom"}` keeps other object members such as
+`portfolio.stale_days`. An override of `ticket.bootstrap_skills` replaces that
+array. The shared config reader gets this behavior from `jq -s '.[0] * .[1]'`.
+
+**A warning names the entries that an array override drops (#1369).**
+An override array that omits entries the matching default array carries
+merges exactly as documented above. The override still wins, unchanged.
+`_lib-read-config.sh` also prints one advisory `WARN:` line to stderr. The
+line names the key and every dropped entry, the first time that override is
+read in a session. Without a session ID, the cross-process cache has no key
+to read or write, so the warning prints again in every new process. This
+never blocks and never changes the merged value. It only makes an
+otherwise-silent drop visible. It applies only to a key that has a default
+array in `.claude/project-config.defaults.json`.
+`migration_paths`, `migration_label`, `ui_paths`, `ui_paths_exclude`,
+`design_paths`, `design_paths_exclude`, and `architecture_paths` have no
+entry in `.claude/project-config.defaults.json` at all — their hook holds
+the built-in default in code, not JSON. A drop against one of those produces
+no warning today. See AgDR-0167 for why, and #1401 for the follow-up that
+tracks closing this gap for those seven keys.
 
 ## Schema (v1)
 
