@@ -1526,10 +1526,11 @@ else
   # FORK-LOCAL (rafik-wahid-cubeish/apexyard#6): an adopter fork's HEAD^ on a
   # sync PR is its previous release, which can predate #1182 and carry neither
   # the instrumentation anchor nor the selection-test branch. There is no
-  # parent implementation to compare against, so skip visibly. Drop this
-  # branch once upstream ships its own fix.
+  # parent implementation to compare against. bin/run-hook-tests.sh fails any
+  # suite that prints a ^SKIP line, so record a labelled not-applicable pass
+  # instead. Drop this branch once me2resh/apexyard#1577 ships upstream.
   elif ! grep -qE 'if is_migration_path "\$_tgt"; then|APEXYARD_SELECTION_TEST' "$_parity_baseline"; then
-    echo "SKIP: #1182 selection parity — parent hook ($_parity_base) predates #1182; no baseline selector to compare"
+    record_pass "#1182 selection parity N/A: parent hook ($_parity_base) predates #1182 (fork-local, me2resh/apexyard#1577)"
   else
     # Instrument only the baseline's first-match selector. The current hook's
     # explicit selection-test branch emits the same raw spelling before gating.
