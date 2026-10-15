@@ -88,8 +88,11 @@ jobs:
           snapshot_repo=$(mktemp -d)
           trap 'rm -rf "$snapshot_repo"' EXIT
           git -C "$snapshot_repo" init -q --bare
+          # FORK-LOCAL (#8): PR #1466 exists only in me2resh/apexyard, so a
+          # fork's own refs/pull/1466/head is missing. Fetch from upstream.
+          # Drop once upstream pins the snapshot source.
           git -C "$snapshot_repo" fetch -q --no-tags \
-            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" \
+            "$GITHUB_SERVER_URL/me2resh/apexyard.git" \
             refs/pull/1466/head:refs/heads/reviewed-snapshots
           # Pin full 40-character SHAs for the reviewed command-scrub snapshots
           # (PR #1466). Short SHAs can become ambiguous as history grows.
