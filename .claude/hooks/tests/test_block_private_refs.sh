@@ -1176,6 +1176,7 @@ run_case "#1206: gh pr merge body-only chain (no --subject at all) names --body,
 # ---------------------------------------------------------------------------
 
 HOOK_SRC="$REPO_ROOT/.claude/hooks/block-private-refs-in-public-repos.sh"
+FLAG_LIB_SRC="$REPO_ROOT/.claude/hooks/_lib-flag-value.sh"
 
 # BLANK comments rather than deleting the lines, and blank trailing comments
 # too — `sed 's/#.*$//'`, not `grep -v '^[[:space:]]*#'`.
@@ -1194,14 +1195,15 @@ HOOK_SRC="$REPO_ROOT/.claude/hooks/block-private-refs-in-public-repos.sh"
 # "fix" it by loosening the pattern — a looser pattern is how the real
 # interval gets back in.
 #
-# SCOPE: this lock reads THIS FILE ONLY. No sourced lib currently contains an
-# interval or performs the conservative cut, so today's surface is covered.
-# If the awk program ever moves into a shared lib, this must follow it.
+# SCOPE: the conservative cut lives in _lib-flag-value.sh. Scan that file
+# too. A hit in either file fails this lock.
 #
 # Only bracket-quantifier forms like {1,2} / {2} / {1,} count. `{,3}` is
 # deliberately not matched: it is not a valid POSIX interval, so every awk
 # treats it literally and there is no divergence to catch.
-INTERVAL_HITS=$(sed 's/#.*$//' "$HOOK_SRC" | grep -nE '\{[0-9]+(,[0-9]*)?\}' || true)
+INTERVAL_HITS=$(
+  sed 's/#.*$//' "$HOOK_SRC" "$FLAG_LIB_SRC" | grep -nE '\{[0-9]+(,[0-9]*)?\}' || true
+)
 if [ -n "$INTERVAL_HITS" ]; then
   FAIL=$((FAIL+1))
   echo "FAIL: hook source contains an ERE interval {n,m} — not portable across awks; use --? or an explicit alternation"
@@ -1240,6 +1242,20 @@ else
   echo "FAIL: interval lock missed a real interval, or misreported its line (got '${LOCK_HIT:-nothing}', want line 2)"
 fi
 rm -f "$LOCKFIX"
+
+# ---------------------------------------------------------------------------
+# #1757 / #1761: the same lock covers every hook library. It scans awk
+# program literals in .claude/hooks/_lib-*.sh. A POSIX grep interval is
+# outside that scan. The standalone test prints the per-check results.
+# ---------------------------------------------------------------------------
+LOCK_LIBS="$REPO_ROOT/.claude/hooks/tests/test_awk_ere_interval_lock.sh"
+if bash "$LOCK_LIBS"; then
+  PASS=$((PASS + 1))
+  echo "PASS: ERE interval lock covers every .claude/hooks/_lib-*.sh awk program"
+else
+  FAIL=$((FAIL + 1))
+  echo "FAIL: ERE interval lock covers every .claude/hooks/_lib-*.sh awk program" >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Result

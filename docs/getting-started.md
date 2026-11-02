@@ -17,6 +17,15 @@ for the directory layout, daily workflow, upgrade path, and FAQ.
   is fixed.
 - Basic familiarity with Claude Code's `CLAUDE.md` system
 
+After cloning, run `bash bin/apexyard doctor` before `/setup`, or use
+`apexyard doctor` if the CLI is on PATH. `/preflight` runs the same checks
+inside Claude Code. The report suggests fixes and makes no changes.
+Exit codes are 0 (pass), 1 (warning), and 2 (failure).
+
+On Windows, install the optional GitHub CLI with `winget install GitHub.cli`
+and the required jq 1.6 or later with `winget install jqlang.jq`. Run the
+check in Git Bash or WSL.
+
 ---
 
 ## Step 1: Fork apexyard on GitHub
@@ -146,6 +155,10 @@ I need to decide between PostgreSQL and DynamoDB for this service.
 Create an AgDR.
 ```
 
+### Turn on branch protection
+
+Turn on required review and required status checks on your protected branches. The hooks are guardrails, not a security boundary. See the [Threat model](../SECURITY.md#threat-model).
+
 ---
 
 ## Terminal push hook (`core.hooksPath`)
@@ -219,6 +232,22 @@ The per-agent model matrix ([AgDR-0050](agdr/AgDR-0050-agent-runtime-overhaul.md
 Three levers manage it, ordered by effort-to-win ratio: (1) **`opusplan`** — Opus plans, Sonnet executes (biggest win, no framework change); (2) the **thin-orchestrator pattern** — keep the Opus loop as a planner / coordinator and delegate implementation to spawned `sonnet` build agents via `/fan-out` or `Workflow`; (3) populate **`agent-routing.yaml`** to pin or route per-agent tiers.
 
 Full explanation + the opt-in thin-orchestrator mode: [`docs/orchestrator-cost-model.md`](orchestrator-cost-model.md).
+
+**Idle CI waits and the prompt cache.** The orchestrator waits for green CI with a Monitor before it spawns a reviewer. The main conversation is idle in that time. A subscription inside its usage limits keeps the main prompt cache for 1 hour. An API key, Bedrock, Vertex, or Foundry keeps it for 5 minutes. A CI wait longer than 5 minutes then rebuilds the whole main context. If you run outside the limits of a subscription, set `promptCacheTtl` to `"1h"` in your Claude Code settings where your provider supports it. The `CLAUDE_CODE_PROMPT_CACHE_TTL` environment variable does the same. Check that your provider accepts a 1-hour cache first. The rule text is in [`.claude/rules/pr-workflow.md`](../.claude/rules/pr-workflow.md).
+
+**Bounding the main context.** On a 1M-context Opus model, Claude Code compacts at about 967K tokens by default. A long orchestrator session then carries a very large context on every turn. The `autoCompactWindow` setting lowers the compaction point. The spike [GH-1637](spike-memos/GH-1637-compaction-threshold.md) shows that the setting bounds the context per turn. The maximum context stayed 30K to 43K tokens below the window. The setting is optional. Use it only when long sessions carry more context than you want and you accept more compactions. If you use it, set it in your user settings, not in a shared project file:
+
+```json
+{
+  "autoCompactWindow": 500000
+}
+```
+
+- **Recommended value:** `500000`. This value is an extrapolation from windows of 100K to 400K. Criterion ac2-2 of the token-efficiency plan must confirm it with `bin/token-cost.py`.
+- **Allowed values:** a whole number from `100000` to `1000000`. Claude Code caps it at the model window.
+- **Other ways to set it:** the `--autocompact` flag (Claude Code 2.1.221 or later) for one launch, `/autocompact` for one model (2.1.288 or later), and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in scripts. The variable accepts a plain integer only.
+- **Quality:** a lower window means more compactions, and each compaction can drop detail from a long task. The spike's quality test was weak, so check long tasks after you set a low window.
+- **Cost:** the spike found no cost saving. In two runs each, a window of 100K cost about 9 percent more than the default, because each compaction rebuilds the prompt cache. Do not go below 300K without a measurement.
 
 ---
 

@@ -32,11 +32,12 @@ check() {
 }
 
 check 'grep pattern is data' no "grep -nE 'gh pr merge [0-9]+' notes.txt"
+check 'quoted zsh ~[ in a grep pattern is data' no "grep '~[gh pr merge 7]' notes.txt"
 check 'rg retains raw merge scan' yes "rg 'glab mr merge 7' notes.txt"
 check 'echo argument is data' no "echo 'gh api repos/demo/service/pulls/7/merge'"
 check 'quoted scratch heredoc is data' no "$(printf "cat > /tmp/merge-notes <<'TEXT'\ngh pr merge 7\nglab mr merge 7\nTEXT")"
 check 'read-only heredoc is data' no "$(printf "cat <<'TEXT'\ntracker_pr_merge demo/service 7 squash\nTEXT")"
-for word in grep egrep fgrep cat echo head tail wc; do
+for word in grep egrep fgrep cat echo jq head tail wc; do
   check "$word quoted data" no "$word 'gh pr merge 7'"
 done
 # printf can run code through an array subscript, so it keeps the raw scan.
@@ -46,6 +47,33 @@ check 'descriptor redirect remains data' no "echo 'gh pr merge 7' 2>&1 | cat"
 check 'multiple heredoc bodies are data' no $'cat <<\'A\' <<\'B\' | grep merge\ngh pr merge 7\nA\nglab mr merge 7\nB'
 check 'tab-stripped heredoc is data' no $'cat <<-\'TEXT\'\n\tgh pr merge 7\n\tTEXT'
 check 'unquoted literal heredoc is data' no $'cat <<TEXT\ngh pr merge 7\nTEXT'
+
+# #1639: jq programs and JSON are data unless another segment can execute them.
+check 'jq JSON merge word is data' no "jq -n '{\"cmd\":\"tracker_pr_merge\"}'"
+check 'jq filter merge phrase is data' no "jq -r '.[] | select(.n==\"gh pr merge 7\")' file.json"
+check 'echo JSON piped into jq is data' no "echo '{\"a\":\"tracker_pr_merge demo/service 7 squash\"}' | jq ."
+check 'quoted jq heredoc is data' no $'jq . <<\'TEXT\'\n{"cmd":"tracker_pr_merge"}\nTEXT'
+check 'jq then real tracker merge' yes "jq -n '{\"cmd\":\"x\"}'; tracker_pr_merge demo/service 7 squash true"
+check 'jq then real gh merge' yes "jq -n '{\"cmd\":\"x\"}' && gh pr merge 7 --squash"
+check 'jq pipeline into bash retains raw scan' yes "echo 'gh pr merge 7'; jq -r '.cmd' f.json | bash"
+check 'bash tracker merge retains raw scan' yes "bash -c 'tracker_pr_merge demo/service 7 squash'"
+check 'bare tracker merge retains raw scan' yes 'tracker_pr_merge demo/service 7 squash'
+check 'jq substitution retains raw scan' yes 'jq -n "$(tracker_pr_merge demo/service 7 squash)"'
+check 'jq startup redirect retains raw scan' yes "jq -n '\"gh pr merge 7\"' > ~/.zshenv"
+
+# ORBIT joins only the general scrubber; every merge wrapper remains visible.
+for merge_form in \
+  'gh pr merge 7' \
+  "sh -c 'gh pr merge 7'" \
+  "eval 'gh pr merge 7'" \
+  'env gh pr merge 7' \
+  'command gh pr merge 7' \
+  '(gh pr merge 7)' \
+  "echo 'gh pr merge 7' | bash" \
+  'echo "$(gh pr merge 7)"' \
+  'echo `gh pr merge 7`'; do
+  check "orbit followed by merge: $merge_form" yes "orbit validate && $merge_form"
+done
 
 check 'gh CLI merge' yes 'gh pr merge 7 --squash'
 check 'gh API merge' yes 'gh api repos/demo/service/pulls/7/merge -X PUT'
@@ -78,6 +106,23 @@ must_detect() {
   printf '%s' "$2" > "$TMP/must-detect/$case_count.cmd"
   check "$1" yes "$2"
 }
+# Construct security regression inputs only in this test. Labels stay neutral.
+g='gh'; p='pr'; m='merge'; phrase="$g $p $m 7"
+must_detect 'N01' "$g >/dev/null $p $m 7"
+must_detect 'N02' "$g $p 2>x $m 7"
+must_detect 'N03' "g\"\$Q\"h $p $m 7"
+must_detect 'N04' "$g p\"\$Q\"r $m 7"
+must_detect 'N05' "$g $p mer\"\$Q\"ge 7"
+must_detect 'N06' "\"\$G\" $p $m 7"
+for op in '>&' '>!'; do
+  must_detect "N07 $op" "echo '$phrase' $op ~/.zshenv"
+  must_detect "N08 $op" "echo '$phrase' $op ~/\"\$Q\".zshenv"
+  must_detect "N09 $op" "echo '$phrase' $op\"\$HOME/.zshenv\""
+done
+for op in '>&2' '2>&1' '>&-'; do
+  check "N10 $op" no "echo '$phrase' $op"
+  must_detect "N11 $op" "echo '$phrase' $op | sh"
+done
 must_detect 'F1.1 echo then quoted API' "echo checking; gh api -X PUT 'repos/me2resh/apexyard/pulls/1497/merge' -f merge_method=squash"
 must_detect 'F1.2 grep then quoted API' 'grep -q ok status.txt && gh api --method PUT "repos/o/r/pulls/7/merge"'
 must_detect 'F1.3 quoted API then echo line' $'gh api -X PUT "repos/o/r/pulls/7/merge" -f merge_method=squash\necho merged'
@@ -94,8 +139,31 @@ must_detect 'B3.3 zsh printf %d with no -v' "printf '%d\n' 'path[\$(gh pr merge 
 must_detect 'B3.4 printf subscript with gh api' "echo start; printf -v 'y[\$(gh api -X PUT repos/o/r/pulls/7/merge)]' %s 1 | wc -c"
 # #1507: three more execution shapes must keep the raw merge scan.
 must_detect 'S1 unquoted zsh ~[' "echo 'gh pr merge 7' ~[demo]"
+must_detect 'S1 grep --regexp=~[' "grep --regexp=~['gh pr merge 7'] notes.txt"
+must_detect 'S1 grep assignment =~[' "grep a=~['gh pr merge 7'] notes.txt"
+must_detect 'S1 grep -e~[' "grep -e~['gh pr merge 7'] notes.txt"
 must_detect 'S2 redirect to zshenv' "echo 'gh pr merge 7' > ~/.zshenv"
 must_detect 'S2 redirect to git hooks' "echo 'gh pr merge 7' > .git/hooks/pre-commit"
+must_detect 'S2 variable redirect to zshenv' "echo 'gh pr merge 7' > \"\$HOME/.zshenv\""
+must_detect 'S2 variable redirect to zshrc' "echo 'gh pr merge 7' > \"\${HOME}/.zshrc\""
+must_detect 'S2 append variable redirect to zshenv' "echo 'gh pr merge 7' >> \"\$ZDOTDIR/.zshenv\""
+must_detect 'S2 variable redirect to pre-push hook' "echo 'gh pr merge 7' > \"\$PWD/.git/hooks/pre-push\""
+must_detect 'S2 cat variable redirect to bashrc' "$(printf "cat > \"\$HOME/.bashrc\" <<'EOF'\ngh pr merge 7\nEOF")"
+# Hakim, review of PR #1765. A "$NAME" span after the first character of a
+# redirect target must keep the raw command. The word reader stops on that
+# span. The first character is not a quote and not a dollar sign.
+must_detect 'S2 trailing variable on zshenv' "echo 'gh pr merge 7' > ~/.zshenv\"\$Q\""
+must_detect 'S2 variable span after tilde' "echo 'gh pr merge 7' > ~/\"\$Q\".zshenv"
+must_detect 'S2 variable span in home path' "echo 'gh pr merge 7' > /Users/\"\$USER\"/.zshenv"
+must_detect 'S2 trailing variable on pre-commit' "echo 'gh pr merge 7' > .git/hooks/pre-commit\"\$Q\""
+must_detect 'S2 braced variable in hook name' "echo 'gh pr merge 7' > .git/hooks/\"\${Q}\"pre-commit"
+must_detect 'S2 variable span before dot git' "echo 'gh pr merge 7' > ./\"\$Q\".git/hooks/pre-commit"
+must_detect 'S2 cat trailing variable on bashrc' "$(printf "cat > ~/.bashrc\"\$Q\" <<'EOF'\ngh pr merge 7\nEOF")"
+# Rex, review of PR #1765. A variable in the middle of the redirect word
+# keeps the raw command. An unset name expands to nothing.
+must_detect 'S2 mid-word variable before zshenv' "echo 'gh pr merge 7' > ~/\"\$NOPE\".zshenv"
+must_detect 'S2 mid-word variable in pre-push' "echo 'gh pr merge 7' > .git/hooks/pre\"\$NOPE\"-push"
+must_detect 'S2 mid-word cat variable before bashrc' "$(printf "cat > ~/\"\$NOPE\".bashrc <<'EOF'\ngh pr merge 7\nEOF")"
 must_detect 'S3 grep --filter=' "grep --filter='gh pr merge 7' notes.txt"
 must_detect 'S3 grep --pager separate' "grep --pager sh 'gh pr merge 7' notes.txt"
 must_detect 'S3 grep quoted --view' "grep '--view' sh 'gh pr merge 7' notes.txt"
@@ -158,10 +226,13 @@ chmod +x "$SB/bin/gh" "$SB/bin/glab"
 (cd "$SB" && git init -q --template=) || exit 1
 for gate in block-unreviewed-merge.sh block-merge-on-red-ci.sh require-architecture-review.sh require-design-review-for-ui.sh; do
   cp "$HOOKS/$gate" "$SB/.claude/hooks/$gate"
-  for shape in grep heredoc; do
+  for shape in grep heredoc fd1 fd2 fd3; do
     case "$shape" in
       grep) cmd="grep -nE 'gh pr merge [0-9]+' notes.txt" ;;
       heredoc) cmd="$(printf "cat > /tmp/merge-notes <<'TEXT'\ngh pr merge 7\nTEXT")" ;;
+      fd1) cmd="echo '$phrase' >&2" ;;
+      fd2) cmd="echo '$phrase' 2>&1" ;;
+      fd3) cmd="echo '$phrase' >&-" ;;
     esac
     payload=$(jq -nc --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')
     (cd "$SB" && printf '%s' "$payload" | PATH="$SB/bin:$PATH" APEXYARD_OPS_DISABLE_PIN=1 /bin/bash ".claude/hooks/$gate" >/dev/null 2>"$TMP/stderr")

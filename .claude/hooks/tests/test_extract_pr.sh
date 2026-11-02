@@ -74,7 +74,7 @@ FAILED_CASES=""
 # The wrapper scanner must stream the command to awk. Linux rejects one
 # environment or argv string above 128 KB, before awk can scan it.
 wrapper_awk=$(sed -n '/^_has_opaque_merge_wrapper() {/,/^}/p' "$LIB_SRC")
-if printf '%s\n' "$wrapper_awk" | grep -Fq "printf '%s\\034' \"\$1\" | awk" \
+if printf '%s\n' "$wrapper_awk" | grep -Fq "_run_awk_or_fallback" \
     && ! printf '%s\n' "$wrapper_awk" | grep -Eq 'ENVIRON|OPAQUE_MERGE_CMD|awk[[:space:]]+-v'; then
   echo "PASS [wrapper awk receives command on stdin]"
   PASS=$((PASS+1))
@@ -737,7 +737,10 @@ if [ -x /bin/bash ]; then
       echo 'printf "%s 5 --repo o/r --body " "$m" > "$cmdfile"'
       echo 'cat "$padfile" >> "$cmdfile"'
       echo 'cmd=$(cat "$cmdfile")'
-      echo 'if merge_command_uses_variable "$cmd"; then echo "wrong result: merge_command_uses_variable returned 0" >&2; exit 1; fi'
+      # Commands over the split-scan size cap fail closed (status 2 → unresolved).
+      echo 'if merge_command_uses_variable "$cmd"; then'
+      echo '  if [ ${#cmd} -le 120000 ]; then echo "wrong result: merge_command_uses_variable returned 0" >&2; exit 1; fi'
+      echo 'fi'
       echo 'echo done > "$1"'
     } > "$perf_dir/run.sh"
     start_s=$(date +%s)
