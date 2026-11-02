@@ -7,9 +7,7 @@ effort: medium
 allowed-tools: Bash, Read, Write, Skill, AskUserQuestion
 ---
 
-## Writing rule
-
-When this skill writes a durable artifact, read .claude/rules/writing-standard.md. Use the controlled technical writing profile.
+Writing: read docs/skills/shared/writing-rule.md before you write a durable artifact.
 
 # /onboard — Guided First-Run Onboarding
 
@@ -76,7 +74,10 @@ exempts this skill's writes (it's on the `ticket.bootstrap_skills` list in
 `.claude/project-config.defaults.json`):
 
 ```bash
-mkdir -p .claude/session && echo "onboard" > .claude/session/active-bootstrap
+marker_home="$(git rev-parse --show-toplevel)"
+. "$marker_home/.claude/hooks/_lib-session-markers.sh"
+skill_marker=$(active_bootstrap_marker_path "$marker_home") || { echo "A session id is required. Restart through the harness adapter." >&2; exit 2; }
+mkdir -p "$marker_home/.claude/session" && echo "onboard" > "$skill_marker"
 ```
 
 Clear this marker on **every** exit path below (success, bail, decline) —
@@ -152,6 +153,10 @@ paraphrase or fork the prose here; both skills read the one shared file.
 Invoke the `Skill` tool with `skill: setup` to run the full config bootstrap
 (company info, tech stack, defaults). This is `/setup`'s Steps 2–7,
 unmodified — `/onboard` does not re-implement any of it.
+
+`/setup` Step 2e asks the status-band question: "Show the ApexYard status
+band above the prompt? (y/n)". On "y" it runs the two `--scope local`
+plugin commands. Do not ask the question a second time in `/onboard`.
 
 **Capture the technical-level signal (D5).** While `/setup`'s Step 2 asks
 "tell me about your company and tech stack," read that answer for how
@@ -451,7 +456,10 @@ fork state and never changes anything. Your depth mode carries over.
 ### 7. Clear the bootstrap marker (REQUIRED — every exit path)
 
 ```bash
-rm -f .claude/session/active-bootstrap
+marker_home="$(git rev-parse --show-toplevel)"
+. "$marker_home/.claude/hooks/_lib-session-markers.sh"
+skill_marker=$(active_bootstrap_marker_path "$marker_home") || { echo "A session id is required. Restart through the harness adapter." >&2; exit 2; }
+rm -f "$skill_marker"
 ```
 
 Run this on success, on the `not-a-fork` bail, on the `configured`

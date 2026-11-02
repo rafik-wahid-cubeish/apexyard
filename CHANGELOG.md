@@ -1,3 +1,263 @@
+## [v5.10.1] — 2026-10-24
+
+Patch release — 4 improvements.
+
+### Changed (refactor / chore / docs)
+
+- (#1873) harden the terraform-ci golden-path template — ce979c5c
+- (#1872) state the hook threat model in SECURITY.md — 953d4501
+- (#1868) add an after-the-release checklist to /release — f9fd80df
+- (#1869) credit five missing issue authors — 0024f0f6
+
+### Thanks
+
+- @SecFathy (Mohammed Fathy) reported the problems that #1872 and #1873 fix.
+
+## [v5.10.0] — 2026-10-22
+
+Minor release — 4 features, 34 fixes, 27 improvements.
+
+### Added (feat)
+
+- (#1797) gate review depth with a trusted tier script and add the Rex delta corpus — 7ba8c564
+- (#1794) warn when the ticket marker belongs to another session or branch — b4080e3b
+- (#1770) key the bootstrap, issue-skill and role-fired markers on the session id — 64e6e103
+- (#1767) add the /preflight skill and apexyard doctor — 1ac23c1f
+
+### Fixed (fix)
+
+- (#1861) detect the curl combined short-option output form as a file write — 8d17671b
+- (#1862) narrow the pin-tree token and close three tamper-gate gaps — 6c5dfff4
+- (#1850) route a continued verb and a variable verb after a redirection — 8b491660
+- (#1847) let review agents write their review body through a scoped Write tool — ab6034db
+- (#1851) accept a heredoc substitution commit message as a data sink — 8df77d5b
+- (#1852) read the commit message past a redirection — 615ac764
+- (#1849) treat a quoted heredoc that writes a file as data in commit-format — 569578bd
+- (#1844) strip a quoted heredoc body before push and commit routing — 2cbc0eaa
+- (#1841) read the push destination past a redirection — fa4d7464
+- (#1838) route git's dashed push and commit programs to the gates — 0f08be87
+- (#1835) route a git verb after a redirection to the push and commit gates — defd0597
+- (#1827) close the merge-gate scan classes found by the shape search — 0344451f
+- (#1804) block git aliases that run push or commit — 5eb65c0f
+- (#1807) block split merge phrases and the >& and >! redirect targets — 7f82bd5e
+- (#1811) let a valid worktree start its ticket and hash the warn claim — 61de7f75
+- (#1802) accept an ancestor merge-base when the plan records are unchanged — a9ecd9af
+- (#1795) share PR metadata across the merge gates in one dispatch — d970c194
+- (#1788) tell a forge auth or network error apart from a missing branch — a791285d
+- (#1793) stop an inherited Claude Code session id overriding the adapter id — 9f3ff671
+- (#1765) fix three merge-gate matcher bugs (#1757, #1758, #1760) — 4ef5feea
+- (#1778) handle a missing forge branch and cover printed commands — 1ba0c1fd
+- (#1769) restore the framework model when a routing override is removed — d63bb611
+- (#1771) let the operator make the portfolio first push — dd2065bf
+- (#1764) lay out laned BPMN on a grid and make lint fail on errors — afdcb067
+- (#1756) check or block five git option forms in the gates — 23d8387f
+- (#1755) skip apexyard body rules for external contributions — 27df313f
+- (#1754) make the shipped ORBIT example pass records-lint — 11114117
+- (#1753) resolve Git Bash mount paths with cygpath — 8cdb26fc
+- (#1750) resolve the push branch in the cd target repo — 2529becc
+- (#1752) report unsupported manifests as not scanned — 4a7283ee
+- (#1751) read commit checks when gh pr checks returns no result — 5713599c
+- (#1747) make push and commit gates read git global options — 7381e0f9
+- (#1746) make fork CI pass on upstream sync PRs — 46638333
+- (#1740) accept Windows path forms in POSIX gates — 9ba947d2
+
+### Changed (refactor / chore / docs)
+
+- (#1860) stop duplicate PR check runs cancelling each other — c206a7a8
+- (#1848) record that shell-text gates are guardrails — 98417717
+- (#1839) harden settings, hooks and pin against in-session tampering — 1200b6df
+- (#1843) pre-filter segments before write-target extraction — 7c6964a3
+- (#1826) test the Rex recount check with read-only source access — 088f48c4
+- (#1809) batch the carry-over walk and limit each gh call — cd52f975
+- (#1823) add shape-probe and recount checks to the Rex prompt — 7fbc265c
+- (#1820) make the local mawk command use mawk as awk — 4300e902
+- (#1821) fix the advisory review items from PR 1797 and PR 1799 — 98d9a39d
+- (#1817) remove macOS runners and cap CI run volume — b3236f8f
+- (#1799) add a runbook for more than one session on one project — 41cc7c28
+- (#1791) make a fresh spawn the default and draft the harness requests — 663161f7
+- (#1800) clear three small review findings — 9e4f75af
+- (#1787) run the harness adapter unit tests on pull requests — 1a634f19
+- (#1784) bump @opencode-ai/plugin — 144d552b
+- (#1786) bump the codeql-action group with 3 updates — 226c8f71
+- (#1785) bump @earendil-works/pi-coding-agent — af65762c
+- (#1779) record the per-agent effort spike as discarded — cd71acd4
+- (#1766) cycle 2026-10-19 reconciliation and o7 slice — e48bbc49
+- (#1768) revision 5, a working DevOps base for every project — f501ad2b
+- (#1734) bump the pi-minor-and-patch group — cee2d239
+- (#1733) bump the opencode-minor-and-patch group — f5c447f9
+- (#1732) bump ossf/scorecard-action from 2.4.4 to 2.5.0 — 91e99189
+- (#1702) bump actions/upload-artifact from 7.0.1 to 7.0.2 — 1c57364b
+- (#1701) bump actions/setup-node from 7.0.0 to 7.1.0 — 21e24a41
+- (#1700) bump the codeql-action group across 1 directory with 3 updates — 0713cc18
+- (#1728) renumber the Windows path AgDR to AgDR-0246 — 3630f7cf
+
+### Closes
+
+- Closes #1533
+- Closes #1534
+- Closes #1723
+- Closes #1730
+- Closes #1736
+- Closes #1739
+- Closes #1741
+- Closes #1742
+- Closes #1743
+- Closes #1744
+- Closes #1748
+- Closes #1759
+- Closes #1763
+- Closes #1772
+- Closes #1776
+- Closes #1780
+- Closes #1781
+- Closes #1782
+- Closes #1783
+- Closes #1792
+- Closes #1796
+- Closes #1798
+- Closes #1801
+- Closes #1803
+- Closes #1806
+- Closes #1808
+- Closes #1813
+- Closes #1814
+- Closes #1819
+- Closes #1824
+- Closes #1825
+- Closes #1831
+- Closes #1832
+
+## [v5.9.0] — 2026-10-15
+
+Minor release — 25 features, 6 fixes, 41 improvements.
+
+Behaviour change: the active ticket now lives in each working tree's git dir (#1576, AgDR-0222). `/start-ticket` writes `apexyard-ticket` into the git dir of the tree you run it in. Each linked worktree needs its own `/start-ticket`. `git worktree remove` deletes the marker with the worktree.
+
+### Upgrade notes
+
+- After you run `/update`, read `/start-ticket` again. It now writes two markers.
+- Nothing that passed the ticket gate before this release is blocked by it. Old markers under `.claude/session/` are still read wherever they were read before. A marker in a tree's git dir wins over them.
+- `/start-ticket` and `/fan-out` still write the old markers too. A rollback to the previous release, or a session that still runs the old hooks after `/update`, keeps its ticket.
+- A SessionStart notice lists the old markers it finds. It is information, not an error.
+- A stale `<git dir>/apexyard-ticket` outranks a newer old-layout file in two cases. One is a rollback followed by a second `/update`. The other is a session that follows the old `/start-ticket` text and writes only the old marker. Run `/start-ticket` again in each tree, or delete the stale marker. A staleness check is a follow-up (follow-up: to be filed).
+- The SessionStart notice lists only old markers that no marker in the same tree's git dir shadows.
+- A later, explicitly breaking release stops reading and writing the old markers. Its upgrade notes will say so.
+
+### Added
+
+- The optional `apexyard-bootcamp` pane guides students through nine Corner Shop modules (#1680). Commands control navigation. Matching tool calls tick checkpoints. The store keeps progress across restarts.
+- The Bash dispatcher and the ticket-first gate fail closed (#1623, AgDR-0228). The `dispatch-bash.sh` and `require-active-ticket.sh` entries in `.claude/settings.json` set `onFailure` to `block` with timeouts of 20 and 10 seconds, taken from the profile in `docs/perf/hook-fail-closed-profile-2026-10.md`. `onFailure` needs Claude Code 2.1.295 or later. An older client ignores the field. `docs/hooks-fail-closed.md` describes the behavior, the `claude --settings '{"disableAllHooks": true}'` escape hatch, and the version finding. `bin/hook-timing-profile.py` measures hook timing. `bin/check-escape-hatch.sh` tests the escape hatch. A new workflow runs `claude plugin validate --strict` on the marketplace with a pinned Claude Code version.
+- `bin/token-cost.py` reports the token and time cost of a session (#1624). It has a session view, a reviewer view and a forge view of me2resh/apexyard PRs. `docs/perf/token-cost.md` gives the usage and the counting rules. The 2026-10-10 baseline is in `docs/perf/token-cost-baseline-2026-10-10.md`.
+- `apexyard-explainer` shows one plain sentence for each tool call in a pane (#1661). It uses templates and keeps the last five lines in session memory. `/explainer-toggle` opens or closes the pane.
+
+### Changed
+
+- Inside `dispatch-bash.sh`, a crashed or killed `require-active-ticket.sh` now blocks the Bash call, as the merge gates do. It warned before. `block-reviewer-ci-wait.sh` stays fail open on purpose, because it is a cost guard (#1623).
+- The ticket gate, the migration gate, the AgDR spike exemptions, the tracker-repo guard and `/status` read the marker through one resolver. It finds a marker in a validated tree's git dir without a git process, so `GIT_DIR` and git config cannot redirect that lookup. The old-layout resolution keeps its old git calls until the breaking release.
+- A marker in a git dir counts only for the ops fork and registered clones. A registered clone sits under the workspace dir, or at the `workspace:` path of its registry entry. Other trees use the old markers, as before.
+- The marker's repo must belong to its tree. A project clone takes only a ticket of its own registry entry, and the ops fork takes no ticket of a registered project. `/start-ticket` stops when the project's clone does not exist.
+- `/fan-out` writer worktrees under `.claude/worktrees/` are gated since AgDR-0219, and the helper writes both markers for them.
+- A spike marker in one project no longer exempts a change in another project.
+- `/fan-out` creates each writer worktree from its task's own repo and writes the markers for it.
+- `/approve-merge` offers to remove the merged PR's worktree. It asks first and never uses `--force`.
+- The macOS hook test run is cheaper (#1613, AgDR-0229). `_lib-extract-pr.sh` skips five process launches whose result is known in advance, so one call of `block-merge-on-red-ci.sh` takes 81 ms instead of 139 ms on macOS. No gate decision changes. `bin/run-hook-tests.sh` packs `--shard I/N` by the measured weights in `bin/hook-test-weights.txt` and keeps round-robin when that file is missing. Five merge-gate tests write the same mock text in every case. The report is `docs/perf/hook-test-profile-2026-10-round2.md`.
+- A records PR may use the branch `orbit/<initiative-id>-<description>` and the title `docs(orbit/<initiative-id>): <description>` without a ticket (#1673). `validate-branch-name.sh`, `validate-pr-create.sh` and the PR title check allow this only when every changed file is under `docs/orbit/`. They compare the branch with a remote-tracking trunk ref. They block when they cannot tell, and the message names the normal `{type}/{TICKET-ID}-{description}` shape. The branch resolves the longest existing Plan ID prefix and blocks unknown initiatives. The PR body and commits carry `Initiative: plan-<initiative-id>`. Records lint blocks cross-initiative records and unreferenced snapshots. Review gates, merge gates and per-PR approval do not change.
+
+### Added (feat)
+
+- (#1722) ship the hardened typescript-nextjs starter — 454515c0
+- (#1721) let a slice PR propose the next slice — 9c60047a
+- (#1716) generate a project at the stack-agnostic floor — 1ddd8d73
+- (#1714) let a slice PR carry its own ORBIT progress — fa31b704
+- (#1709) add the hosting-first /scaffold interview and scaffold spec — 27de5bdb
+- (#1689) approve a merge or design review from a menu — f08a17da
+- (#1685) let a sanctioned reviewer write to its session scratchpad — 3bae7412
+- (#1687) write the rule-body exclude per clone — d83489f3
+- (#1688) let agent reviews post as an opt-in GitHub App — e7d1c5f5
+- (#1681) add the Bootcamp pane, a guided presentation beside the session — d1cea51f
+- (#1678) start review and audit agents lean and trim Hakim and Tariq — e6ce53ce
+- (#1666) add the apexyard-explainer pane plugin — 832ed3b4
+- (#1676) ORBIT pane shows initiatives and work in flight — 739888bc
+- (#1663) make the skill bodies on the execution path short — e1d1f3a3
+- (#1652) trim Rex input tokens with omitClaudeMd and a floor-rules block — 9b25c837
+- (#1651) run reviews in parallel by detecting review agents by type — 425a4ab2
+- (#1648) fail closed on the dispatcher and ticket-first gates — 48929388
+- (#1631) add the apexyard-status band as a fork-only plugin — 919081a7
+- (#1634) reviewers check CI once and never wait — be687ba7
+- (#1633) add one script that reports token and time cost — f76b86fb
+- (#1630) add records lint, cycle PR flow and live status to /orbit — 49c39add
+- (#1629) mine Rex-approved commits that Hakim or Tariq rejected — bbb2ba49
+- (#1608) add the apexyard plugin marketplace with the orbit plugin — d5b2095c
+- (#1584) store the ticket marker in each working tree's git dir — c40c4c79
+- (#1583) load a managed project's context on first touch — ea237219
+
+### Fixed (fix)
+
+- (#1672) add a blank line after a new Checks heading — 3ae6d00b
+- (#1668) read a brace for body like do in the reviewer CI-wait guard — 1b5454ad
+- (#1657) treat jq arguments as data in merge-command detection — 28548371
+- (#1642) lint only changed text fields in records — 3e92ebe8
+- (#1606) govern ORBIT ticket prefixes from orbit.governed_prefixes — d276b2f3
+- (#1607) read every repo flag spelling in the merge gates — 48826140
+
+### Changed (refactor / chore / docs)
+
+- (#1719) cut the o2 starter slice — 59290075
+- (#1717) slice PRs propose the next slice (revision 5) — 7d1e09d4
+- (#1712) let Rex review a Reconciliation in the PR diff (revision 4) — 31804dec
+- (#1711) show slice progress at merge (revision 4) — 73267ccb
+- (#1710) name the initiative, reconcile o1 and cut the o2 floor slice — 0890c021
+- (#1707) revision 2 and slice o1 — a9e9ab1a
+- (#1695) require a recorded operator interview before a Plan revision — 7fa4e16a
+- (#1667) fix disagreement miner grouping and verdict edge cases — e68ea138
+- (#1691) light CI per PR, full matrix on merge, nightly and release — 14e09533
+- (#1693) add scaffold initiative records — 81b0e545
+- (#1692) reconcile o6 evidence — a64323a2
+- (#1686) keep ORBIT criteria short and record proof separately — edf06198
+- (#1675) allow orbit/ records branches without a ticket — e3e2a60f
+- (#1683) accept a chain of clean base merges in carry-over — cba7a49e
+- (#1684) keep zsh path variables raw and silence the zsh export warning — e93df705
+- (#1679) refresh ready-to-merge PRs after each merge — 400db9b4
+- (#1670) add the o5 effort spike and o2 build slices — 7ace6ba6
+- (#1659) cut macOS hook test cost with exact fast paths and weighted shards — 0eda7851
+- (#1656) close remaining reviewer CI-wait patterns and cut hook cost — 3a31d4eb
+- (#1658) let adopters add review agent types to the review lock — d740fbee
+- (#1655) make the handoff leak-scrub test prove the scrub works — 5c7bee70
+- (#1654) add the o5 and o6 slices and reconcile the token plan at 9b25c83 — d2af086f
+- (#1646) record the auto-compaction window spike and recommended setting — 8c7ef8be
+- (#1647) add the o9 slice so reviews run in parallel — 7d314c04
+- (#1645) record AgDR-0226, the ORBIT Initiative replaces Plan — ba80f6cb
+- (#1643) check Rex carry-over before a refresh re-review — cf3e4070
+- (#1635) record token plan r3 cycle after o1, o4 and o8 merged — db03eb04
+- (#1628) reconcile the orbit-build plan at 49a2979 — 0234ea50
+- (#1622) record token plan r2 cycle with AgDR-0225 — 49a2979b
+- (#1621) add the o1 slice of the token-efficiency plan — 692c17e8
+- (#1620) record the ORBIT plan for token efficiency — 9ae097ac
+- (#1617) record the ORBIT plan for gate hardening and golden paths — bace9dbc
+- (#1615) profile the slowest hook tests and cut redundant work — 6d2ef1ba
+- (#1614) split the macOS hook-test job into four shards — 53f0baea
+- (#1610) share one quoted-flag parser across four hooks — 2fe379f7
+- (#1611) share one awk-with-fallback helper and one line join — 20f721c2
+- (#1605) bump TypeScript to 7.0.2 in both harness adapters — 7a142139
+- (#1609) bound project-context reads and read frontmatter safely — 072b4404
+- (#1600) credit NagyWesley as a code contributor — 7771238f
+- (#1602) batch the harness-adapter minor and patch bumps — 02392d02
+- (#1597) credit new contributors and issue authors in the README — f3b23610
+
+### Closes
+
+- Closes #1576
+- Closes #1585
+- Closes #1586
+- Closes #1587
+- Closes #1588
+- Closes #1596
+- Closes #1598
+- Closes #1599
+- Closes #1601
+- Closes #1603
+- Closes #1604
+
 ## [v5.8.0] — 2026-10-08
 
 Minor release — 14 features, 50 fixes, 26 improvements.
